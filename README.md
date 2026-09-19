@@ -127,6 +127,17 @@ export ZG_SMTP_SENDER_NAME=知更
 
 本项目是标准 Python HTTP 服务，可部署到任意能跑 `python3 server.py` 的环境（自有服务器、容器、或支持 Python 的托管平台）。**务必用 HTTPS 反代**——CSP 安全头仅在 HTTPS（`X-Forwarded-Proto`）下发送；明文 http 源下为避免个别 WebView 的脚本加载异常，会自动跳过 CSP。
 
+## 设计文档
+
+完整的重设计图纸、可交互原型与界面截图见 [`docs/design/`](docs/design/)：
+
+| 文件 | 内容 |
+|---|---|
+| `AA-重做设计图纸.html` | 交互/视觉设计图纸（单文件，双击即开） |
+| `AA-重做原型-单文件.html` | 可交互单文件原型（零外链，可直接体验改版前交互） |
+| `screenshots/` | 上线版界面截图（今天 / 时间线 / 它在意的 / 它在想） |
+| `assets/` | 自托管静态资源与构建脚本（Open Props / AutoAnimate / Lucide 子集，含各自 LICENSE） |
+
 ## 安全说明
 
 - 会话 Cookie 为 `HttpOnly` + `SameSite`，30 天有效期。
