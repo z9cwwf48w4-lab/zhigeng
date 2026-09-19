@@ -2178,35 +2178,48 @@ async function enterApp() {
   S.user = u || {};
   try { S.user.email = S.user.email || (await Cloud.auth.session() || {}).user?.email || ''; } catch (e) {}
 
-  // 本地模式攒下的东西：只有在账号是空的时候才搬（见 migrateLocalToCloud）
-  const mig = await migrateLocalToCloud();
-  S.migrated = mig;
-
-  await Convos.ensure();
-  await loadAll();
-  await ensureSettings();
-  await settle();
-  await loadAll();
-
-  // 今天还没跑过 → 自动想一次（没有未决提案时）
-  const hasPending = S.proposals.some(p => !p.outcome && p.touched);
-  const today = new Date().toDateString();
-  const conv = Convos.current() || {};
-  const lastRun = conv.last_run_at ? new Date(conv.last_run_at).toDateString() : null;
-  if (!hasPending && lastRun !== today && S.memories.length) {
-    try { await runThinkBatch(1); } catch (e) { /* 自动跑失败不该挡住进入 */ }
-  }
-
+  /* ⚡ 身份确认即进场，数据同步转后台。
+   * 旧版把全部数据加载完才切屏：登录链路上 7-8 个请求串行，网络稍慢
+   * 按钮就停在「处理中」十几秒，看起来像卡死。现在先让用户进来看到界面，
+   * 同步在背后继续，完成后再刷新一次视图。 */
   S.booted = true;
   $('#auth-view').hidden = true;
   $('#app-view').hidden = false;
   paintIdentity();
   updateWhoState();
+  go(S.route || 'today');
+  toast('已登录，正在同步数据…', 'info');
 
-  Sync.setLocalOnly(false);
-  Sync.start();
-  startVersionWatch();
-  go('today');
+  // ── 后台同步：失败只提示，不把用户挡在外面 ──
+  let mig = null;
+  try {
+    // 本地模式攒下的东西：只有在账号是空的时候才搬（见 migrateLocalToCloud）
+    mig = await migrateLocalToCloud();
+    S.migrated = mig;
+
+    await Convos.ensure();
+    await loadAll();
+    await ensureSettings();
+    await settle();
+    await loadAll();
+
+    // 今天还没跑过 → 自动想一次（没有未决提案时）
+    const hasPending = S.proposals.some(p => !p.outcome && p.touched);
+    const today = new Date().toDateString();
+    const conv = Convos.current() || {};
+    const lastRun = conv.last_run_at ? new Date(conv.last_run_at).toDateString() : null;
+    if (!hasPending && lastRun !== today && S.memories.length) {
+      try { await runThinkBatch(1); } catch (e) { /* 自动跑失败不该挡住进入 */ }
+    }
+
+    Sync.setLocalOnly(false);
+    Sync.start();
+    startVersionWatch();
+    go(S.route || 'today');
+  } catch (e) {
+    toast('数据同步出了点问题：' + (e && e.message ? e.message : '未知错误') +
+          '。界面先用着，稍后在设置里重试。', 'err');
+  }
 
   // 迁移结果必须**明说**，不能让用户猜自己的数据在哪
   if (mig && mig.moved) {
