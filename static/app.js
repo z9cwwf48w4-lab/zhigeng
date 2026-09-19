@@ -278,6 +278,7 @@ function renderAuth(mode) {
         '<button class="link" data-auth-tab="otp">用验证码登录</button>' +
         '<button class="link" data-auth-tab="phone">用手机号登录</button>' +
         (S.authMode === 'login' ? '<button class="link" data-auth-tab="forgot">忘记密码</button>' : '') +
+        '<button class="link" data-act="auth-skip">先不登录，直接逛逛</button>' +
       '</div>';
   } else if (S.authMode === 'phone') {
     inner =
@@ -296,6 +297,7 @@ function renderAuth(mode) {
       '<button class="btn btn-primary btn-block" id="auth-go" hidden>登录</button>' +
       '<div class="auth-foot">' +
         '<button class="link" data-auth-tab="login">返回密码登录</button>' +
+        '<button class="link" data-act="auth-skip">先不登录，直接逛逛</button>' +
       '</div>';
   } else if (S.authMode === 'otp') {
     inner =
@@ -316,6 +318,7 @@ function renderAuth(mode) {
       '<button class="btn btn-primary btn-block" id="auth-go" hidden>登录</button>' +
       '<div class="auth-foot">' +
         '<button class="link" data-auth-tab="login">返回密码登录</button>' +
+        '<button class="link" data-act="auth-skip">先不登录，直接逛逛</button>' +
       '</div>';
   } else {
     inner =
@@ -339,6 +342,7 @@ function renderAuth(mode) {
       '<button class="btn btn-primary btn-block" id="auth-go" hidden>设置新密码并登录</button>' +
       '<div class="auth-foot">' +
         '<button class="link" data-auth-tab="login">返回登录</button>' +
+        '<button class="link" data-act="auth-skip">先不登录，直接逛逛</button>' +
       '</div>';
   }
 
@@ -357,6 +361,13 @@ let forgotSession = { handle: null, email: '' };
 function bindAuth() {
   $$('[data-auth-tab]').forEach(function (b) {
     b.onclick = function () { renderAuth(b.dataset.authTab); };
+  });
+
+  /* 「先不登录，直接逛逛」：回背后已就绪的本地模式。
+     首启流程是先 enterLocal 再 openAuth，所以 S.booted 必然为真；
+     若真出现未启动的边角情况（理论不可达），点击无副作用即可。 */
+  $$('[data-act="auth-skip"]').forEach(function (b) {
+    b.onclick = function () { if (S.booted) backToApp(); };
   });
 
   const errEl = $('#auth-err');
@@ -2370,14 +2381,21 @@ async function boot() {
   }
 
   try {
-    if (session && session.user) await enterApp();
-    else await enterLocal();
+    if (session && session.user) {
+      await enterApp();
+    } else {
+      // 先把本地模式在背后启动好（这样登录页的「先不登录」出口才有地方可回），
+      // 再把登录界面递到用户眼前。旧逻辑静默进本地模式，
+      // 新用户根本发现不了登录入口 —— 多人产品不该这样开局。
+      await enterLocal();
+      if (S.cloudOk) openAuth();
+    }
   } catch (e) {
     // 连本地模式都进不去（例如 localStorage 被彻底禁用）才算真正的启动失败
     $('#auth-view').hidden = false;
     $('#auth-form-host').innerHTML =
       '<h1>无法启动</h1><p class="sub">' + esc(e && e.message || e) + '</p>' +
-      '<p class="hint">如果浏览器禁用了本地存储，AA 无法保存任何记忆。</p>';
+      '<p class="hint">如果浏览器禁用了本地存储，知更无法保存任何记忆。</p>';
     return;
   }
 
