@@ -1,0 +1,247 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>AA 云端环境探针</title>
+<style>
+  :root{
+    --ink:#14161a; --ink2:#454c56; --ink3:#79818d;
+    --line:#e4e7eb; --line2:#eff1f4;
+    --bg:#fff; --bg2:#f7f8fa; --bg3:#f1f3f6;
+    --brand:#3355d1; --soft:#eaeefc;
+    --ok:#0f7b47; --okbg:#e6f5ec;
+    --warn:#9a6200; --warnbg:#fdf3e0;
+    --bad:#b4232a; --badbg:#fdecec;
+    --mono:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;
+  }
+  *{box-sizing:border-box}
+  body{
+    margin:0;background:var(--bg2);color:var(--ink);
+    font-family:-apple-system,BlinkMacSystemFont,"PingFang SC","Hiragino Sans GB","Microsoft YaHei",sans-serif;
+    font-size:15px;line-height:1.7;-webkit-font-smoothing:antialiased;
+  }
+  .wrap{max-width:880px;margin:0 auto;padding:26px 20px 60px}
+  header{background:#fff;border:1px solid var(--line);border-radius:14px;padding:24px 26px;margin-bottom:18px}
+  .kick{font-size:11.5px;letter-spacing:.15em;text-transform:uppercase;color:var(--brand);font-weight:650;margin:0 0 8px}
+  h1{margin:0 0 8px;font-size:24px;letter-spacing:-.02em}
+  .sub{margin:0;color:var(--ink3);font-size:13.5px}
+  .live{display:inline-flex;align-items:center;gap:7px;margin-top:14px;font-size:12.5px;color:var(--ink3)}
+  .dot{width:7px;height:7px;border-radius:50%;background:var(--ok);animation:p 1.8s infinite}
+  @keyframes p{0%,100%{opacity:1}50%{opacity:.25}}
+  .cards{display:flex;gap:13px;flex-wrap:wrap;margin-bottom:18px}
+  .card{
+    flex:1 1 250px;background:#fff;border:1px solid var(--line);
+    border-radius:13px;padding:17px 19px;
+  }
+  .card .q{font-size:12.5px;color:var(--ink3);margin:0 0 7px;font-weight:600}
+  .card .verdict{font-size:19px;font-weight:700;letter-spacing:-.01em;margin:0 0 9px;line-height:1.35}
+  .card .ev{margin:0;font-size:12.5px;color:var(--ink2);font-family:var(--mono);line-height:1.65;word-break:break-all}
+  .v-ok{color:var(--ok)} .v-warn{color:var(--warn)} .v-bad{color:var(--bad)} .v-idle{color:var(--ink3)}
+  .card.ok{background:var(--okbg);border-color:#c8e6d5}
+  .card.warn{background:var(--warnbg);border-color:#f0dcb4}
+  .card.bad{background:var(--badbg);border-color:#f2cccd}
+  .panel{background:#fff;border:1px solid var(--line);border-radius:13px;padding:19px 21px;margin-bottom:16px}
+  .panel h2{font-size:15px;margin:0 0 12px;font-weight:650}
+  table{width:100%;border-collapse:collapse;font-size:13px}
+  th{text-align:left;color:var(--ink3);font-weight:600;font-size:12px;padding:0 12px 8px 0;border-bottom:1px solid var(--line)}
+  td{padding:8px 12px 8px 0;border-bottom:1px solid var(--line2);vertical-align:top}
+  tr:last-child td{border-bottom:none}
+  td.k{color:var(--ink3);width:38%;white-space:nowrap}
+  td.v{font-family:var(--mono);font-size:12.5px;word-break:break-all}
+  .note{font-size:12.5px;color:var(--ink3);margin:12px 0 0;line-height:1.7}
+  .gaps{margin:0;padding:0;list-style:none;font-family:var(--mono);font-size:12.5px}
+  .gaps li{padding:6px 0;border-bottom:1px solid var(--line2);color:var(--warn)}
+  .gaps li:last-child{border-bottom:none}
+  .empty{color:var(--ink3);font-size:13px;margin:0}
+  a{color:var(--brand);text-decoration:none;border-bottom:1px solid #ccd7f7}
+  footer{margin-top:20px;font-size:12px;color:var(--ink3);text-align:center}
+  @media(max-width:560px){.wrap{padding:16px 14px 44px}.card{flex:1 1 100%}}
+</style>
+</head>
+<body>
+<div class="wrap">
+
+  <header>
+    <p class="kick">临时探针 · 验证完即替换</p>
+    <h1>AA 云端环境探针</h1>
+    <p class="sub">这个页面不是 AA 本体。它是用来实测「云端这个运行环境到底是什么脾气」的临时程序——三个问题，平台文档都没有答案，只能跑起来看。</p>
+    <div class="live"><span class="dot"></span><span id="live">正在读取…</span></div>
+  </header>
+
+  <div class="cards">
+    <div class="card" id="c1">
+      <p class="q">① 进程能不能常驻？</p>
+      <p class="verdict v-idle" id="v1">读取中</p>
+      <p class="ev" id="e1">—</p>
+    </div>
+    <div class="card" id="c2">
+      <p class="q">② 写的文件能不能留住？</p>
+      <p class="verdict v-idle" id="v2">读取中</p>
+      <p class="ev" id="e2">—</p>
+    </div>
+    <div class="card" id="c3">
+      <p class="q">③ 能不能访问外网？</p>
+      <p class="verdict v-idle" id="v3">读取中</p>
+      <p class="ev" id="e3">—</p>
+    </div>
+  </div>
+
+  <div class="panel">
+    <h2>进程状态</h2>
+    <table>
+      <tr><td class="k">当前进程 PID</td><td class="v" id="d_pid">—</td></tr>
+      <tr><td class="k">本次启动时间</td><td class="v" id="d_boot">—</td></tr>
+      <tr><td class="k">本次已运行</td><td class="v" id="d_uptime">—</td></tr>
+      <tr><td class="k">累计启动次数</td><td class="v" id="d_boots">—</td></tr>
+      <tr><td class="k">最早一次启动</td><td class="v" id="d_first">—</td></tr>
+      <tr><td class="k">距最早已过去</td><td class="v" id="d_since">—</td></tr>
+      <tr><td class="k">心跳累计次数</td><td class="v" id="d_hb">—</td></tr>
+      <tr><td class="k">最近一次心跳</td><td class="v" id="d_hbage">—</td></tr>
+      <tr><td class="k">运行主机 / Python</td><td class="v" id="d_host">—</td></tr>
+    </table>
+    <p class="note"><b>怎么读：</b>心跳每 20 秒一次。如果「心跳累计次数」持续增长，说明进程一直活着。如果「累计启动次数」变成 2 以上，说明进程被杀过又重启了。如果下面出现「冻结间隙」，说明进程没死但被挂起过——这两种情况的应对办法完全不同。</p>
+  </div>
+
+  <div class="panel">
+    <h2>检测到的冻结间隙（心跳超过 90 秒没跳）</h2>
+    <ul class="gaps" id="gaps"><li class="empty">暂无 —— 进程一直有规律地跳着</li></ul>
+    <p class="note">有记录＝进程曾被暂停（不是被杀）。没有记录＝要么一直健康，要么还没遇到。</p>
+  </div>
+
+  <div class="panel">
+    <h2>外网连通性</h2>
+    <table id="net"><tr><td class="k">读取中…</td><td class="v">—</td></tr></table>
+    <p class="note"><b>怎么读：</b>判定口径是「只要对方答复了就算通」——哪怕返回 404、403、500 也算通，因为我们要回答的是「网络能不能出去」，不是「那个地址有没有内容」。只有连不上（DNS 失败、拒绝连接、超时）才记为失败。<br>「公网连通」决定能不能调外部的短信接口；「平台数据面」决定这个进程能不能直接用平台的数据库和大模型。两条都通，方案甲和乙都没有额外障碍。</p>
+  </div>
+
+  <div class="panel">
+    <h2>磁盘持久性</h2>
+    <table id="disk"><tr><td class="k">读取中…</td><td class="v">—</td></tr></table>
+    <p class="note"><b>怎么读：</b>同时往两个位置写同一份状态。只要有任意一处能在「重启之后」还读得到旧内容，就说明云端文件是真持久的；两处都归零，说明每次都是干净的新容器，用户数据就必须全部放到平台数据库里。</p>
+  </div>
+
+  <footer>AA 云端环境探针 · 每 10 秒自动刷新 · 临时程序，验证完成后会被 AA 正式版替换</footer>
+</div>
+
+<script>
+function fmtDur(s){
+  if(s===null||s===undefined) return "—";
+  s = Math.max(0, Math.round(s));
+  var d=Math.floor(s/86400), h=Math.floor(s%86400/3600), m=Math.floor(s%3600/60), x=s%60;
+  if(d>0) return d+" 天 "+h+" 小时 "+m+" 分";
+  if(h>0) return h+" 小时 "+m+" 分";
+  if(m>0) return m+" 分 "+x+" 秒";
+  return x+" 秒";
+}
+function t(id,v){ document.getElementById(id).textContent = (v===null||v===undefined||v==="")?"—":v; }
+function setCard(n, cls, verdict, ev){
+  var c=document.getElementById("c"+n);
+  c.className = "card" + (cls?" "+cls:"");
+  var v=document.getElementById("v"+n);
+  v.textContent = verdict;
+  v.className = "verdict " + (cls==="ok"?"v-ok":cls==="warn"?"v-warn":cls==="bad"?"v-bad":"v-idle");
+  document.getElementById("e"+n).textContent = ev;
+}
+function esc(s){ return String(s==null?"":s).replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;"); }
+
+function render(d){
+  var uptime = d.uptime_seconds||0, since = d.since_first_boot_seconds||0;
+  var boots = d.boot_count||0, gaps = d.gaps||[];
+
+  // ① 常驻性
+  var hbAge = d.heartbeat_age_seconds;
+  if(boots>=2){
+    setCard(1,"warn","被杀过，重启了 "+(boots-1)+" 次",
+      "累计启动 "+boots+" 次，进程不是常驻的。");
+  }else if(gaps.length>0){
+    setCard(1,"warn","一直活着，但被挂起过 "+gaps.length+" 次",
+      "没有重启，却有 "+gaps.length+" 段心跳空档。");
+  }else if(since>=1800){
+    setCard(1,"ok","连续运行 "+fmtDur(since)+"，未中断",
+      "已跑过 30 分钟检验线：无重启、无冻结。");
+  }else{
+    setCard(1,"","已运行 "+fmtDur(since)+"，继续观察",
+      "尚未跑满 30 分钟，还不足以下结论。");
+  }
+  t("d_pid", d.pid);
+  t("d_boot", d.last_boot_iso);
+  t("d_uptime", fmtDur(uptime));
+  t("d_boots", boots + (boots>=2?"（有重启）":"（仅本次）"));
+  t("d_first", d.first_boot_iso);
+  t("d_since", fmtDur(since));
+  t("d_hb", (d.heartbeat_count||0)+" 次");
+  t("d_hbage", hbAge===null?"—":(hbAge+" 秒前"));
+  t("d_host", (d.hostname||"—")+" / "+ (d.python||"—"));
+
+  // 间隙列表
+  var gl=document.getElementById("gaps");
+  if(gaps.length){
+    gl.innerHTML = gaps.slice(-12).reverse().map(function(g){
+      return "<li>停跳 "+esc(g.seconds)+" 秒：从 "+esc(g.from)+" 到 "+esc(g.to)+"</li>";
+    }).join("");
+  }else{
+    gl.innerHTML = '<li class="empty">暂无 —— 进程一直有规律地跳着</li>';
+  }
+
+  // ② 持久性
+  var disk = d.disk||{}, names = Object.keys(disk);
+  if(boots>=2 && d.first_boot_iso){
+    setCard(2,"ok","能留住",
+      "重启后仍读到最早启动时间，磁盘是真的。");
+  }else{
+    setCard(2,"","待观察 —— 还没经历过重启",
+      "当前只能确认「写得进去」，留不留得住要等一次重启才知道。");
+  }
+  var dhtml = names.map(function(k){
+    var v = disk[k]||{};
+    var ok = v.write_count>0 && !v.last_error;
+    return "<tr><td class='k'>"+esc(k)+"<br><span style='font-size:11px;color:#79818d'>"+esc(v.path||"")+"</span></td>"+
+           "<td class='v'><span style='"+(ok?"color:#0f7b47":"color:#b4232a")+"'>"+
+           (ok?"可写":"写入异常")+"</span> · 已写 "+esc(v.write_count||0)+" 次"+
+           (v.first_write_iso?"<br>最早写入 "+esc(v.first_write_iso):"")+
+           (v.last_error?"<br>错误："+esc(v.last_error):"")+"</td></tr>";
+  }).join("");
+  document.getElementById("disk").innerHTML = dhtml || "<tr><td class='k'>无</td><td class='v'>—</td></tr>";
+
+  // ③ 外网
+  var net = d.net||{}, keys = Object.keys(net);
+  var anyOk = false, allOk = keys.length>0;
+  keys.forEach(function(k){ var s=net[k]||{}; if(s.ok_count>0) anyOk=true; else allOk=false; });
+  if(!keys.length){
+    setCard(3,"","检测中…","首次探测还没返回结果。");
+  }else if(allOk){
+    setCard(3,"ok","通（"+keys.length+"/"+keys.length+"）","公网与平台数据面均可达。");
+  }else if(anyOk){
+    setCard(3,"warn","部分通（"+keys.filter(function(k){return (net[k]||{}).ok_count>0;}).length+"/"+keys.length+"）","有目标可达，有目标不可达 —— 见下表。");
+  }else{
+    setCard(3,"bad","不通","所有目标均失败 —— 见下表错误原因。");
+  }
+  var nhtml = keys.map(function(k){
+    var s = net[k]||{};
+    var cls = s.ok_count>0 ? "#0f7b47" : "#b4232a";
+    return "<tr><td class='k'>"+esc(k)+"</td><td class='v'>"+
+           "<span style='color:"+cls+"'>成功 "+esc(s.ok_count||0)+" · 失败 "+esc(s.fail_count||0)+"</span>"+
+           (s.last_latency_ms?(" · 最近 "+esc(s.last_latency_ms)+" ms"):"")+
+           (s.last_detail?("<br>最近响应："+esc(s.last_detail)):"")+
+           (s.last_error?("<br>最近错误："+esc(s.last_error)):"")+"</td></tr>";
+  }).join("");
+  document.getElementById("net").innerHTML = nhtml || "<tr><td class='k'>无</td><td class='v'>—</td></tr>";
+
+  document.getElementById("live").textContent =
+    "数据更新于 "+new Date().toLocaleTimeString("zh-CN")+" · 探针已运行 "+fmtDur(since);
+}
+
+function poll(){
+  fetch("/api/probe", {cache:"no-store"})
+    .then(function(r){ if(!r.ok) throw new Error("HTTP "+r.status); return r.json(); })
+    .then(render)
+    .catch(function(e){
+      document.getElementById("live").textContent = "读取失败："+e.message+"（下个周期重试）";
+    });
+}
+poll();
+setInterval(poll, 10000);
+</script>
+</body>
+</html>

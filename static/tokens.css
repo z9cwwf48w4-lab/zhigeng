@@ -1,0 +1,123 @@
+/* ==========================================================================
+   知更 · 设计令牌
+   --------------------------------------------------------------------------
+   组装说明（哪些是开源项目，哪些是自己画的）：
+
+   来自 open-props@1.7.15（MIT，自托管 ./open-props.min.css）
+     · 尺寸尺度 --size-*            → 间距只允许取这里的值
+     · 缓动 --ease-*                 → 所有 transition 用这四条里的一条
+     · 阴影 --shadow-1/2/3           → 深度层次
+   自己画的（不可替代的部分）：
+     · 语义色与「金色只给我需要你」的纪律
+     · 三种消息的视觉区分（我需要你 / 我查到了 / 沉默）
+     · 衰减的视觉表达（细线由实到虚）而不是打印数字
+
+   底部还有一层「旧令牌别名」：app.js 的部分内联样式仍引用旧变量名
+   （--fs-* / --s-* / --bg-elev-2 …），别名指向新令牌，保证不出现断链。
+   ========================================================================== */
+
+/* ── 复位 ─────────────────────────────────────────────────────────── */
+
+*,
+*::before,
+*::after { box-sizing: border-box; }
+
+html { -webkit-text-size-adjust: 100%; }
+
+body { margin: 0; }
+
+h1, h2, h3, h4, p, figure, blockquote, dl, dd { margin: 0; }
+
+ul, ol { margin: 0; padding: 0; list-style: none; }
+
+button,
+input,
+select,
+textarea {
+  font: inherit;
+  color: inherit;
+  margin: 0;
+}
+
+button { background: none; border: 0; cursor: pointer; }
+
+img, svg { display: block; max-width: 100%; }
+
+/* hidden 必须赢过任何 display 声明：
+   .nav-item{display:flex} 之类会覆盖 UA 默认的 [hidden]{display:none}，
+   结果就是「本地模式下退出登录按钮照常显示」这种状态泄漏。 */
+[hidden] { display: none !important; }
+
+/* ── 语义令牌 ─────────────────────────────────────────────────────── */
+
+:root {
+  /* 表面：近黑偏冷，是「工具」不是「科技风」 */
+  --bg:          #0B0C0F;
+  --bg-raise:    #121317;
+  --bg-sink:     #08090B;
+  --bg-hover:    rgba(255, 255, 255, .035);
+  --bg-on:       rgba(255, 255, 255, .06);
+
+  --line:        rgba(255, 255, 255, .07);
+  --line-2:      rgba(255, 255, 255, .12);
+
+  /* 文字：四档，阶差靠明度 + 字号一起拉 */
+  --ink:         #E9EBEF;
+  --ink-2:       #A2A6AE;
+  --ink-3:       #71757D;
+  --ink-4:       #4E5157;
+
+  /* ── 纪律：金色只给「我需要你」。别处一律不许用。 ── */
+  --gold:        #E5B961;
+  --gold-ink:    #1A1408;          /* 金底上压深字，不压白字 */
+  --gold-dim:    rgba(229, 185, 97, .13);
+  --gold-line:   rgba(229, 185, 97, .30);
+
+  /* ── 冷青只给「我查到了」：它自己搞定的，不需要你动手 ── */
+  --aqua:        #6FC3B4;
+  --aqua-ink:    #06211C;
+  --aqua-dim:    rgba(111, 195, 180, .12);
+  --aqua-line:   rgba(111, 195, 180, .28);
+
+  --alert:       #DE7A6E;
+  --alert-dim:   rgba(222, 122, 110, .13);
+  --warn:        #D9A05B;
+  --danger:      #D8695E;
+
+  /* 中性主操作：弹窗确认、设置保存这类「既不是求助也不是汇报」的按钮。
+     刻意不用金色 —— 金色一多，「我需要你」就不稀罕了。 */
+  --primary-ink: #14161A;
+
+  /* 圆角：只三档 + 胶囊 */
+  --r-1: 6px;  --r-2: 10px;  --r-3: 14px;  --r-full: 999px;
+
+  /* 字阶：阶差 ≥1.25。hero 只给「今天那一件事」的标题用。 */
+  --t-hero: 38px;
+  --t-h1:   25px;
+  --t-h2:   19px;
+  --t-h3:   15.5px;
+  --t-body: 15px;
+  --t-sm:   13.5px;
+  --t-xs:   12px;
+
+  --dur-fast: 130ms;
+  --dur:      200ms;
+  --dur-slow: 340ms;
+
+  --measure: 58ch;
+  --rail-w: 242px;
+  --col-w: 660px;      /* 内容单栏宽度：读一件事的舒适宽度 */
+}
+
+/* ── 旧令牌别名（app.js 内联样式兼容层，勿删） ─────────────────────── */
+:root {
+  --fs-h1: var(--t-h1);   --fs-h2: var(--t-h2);   --fs-h3: var(--t-h3);
+  --fs-body: var(--t-body); --fs-sm: var(--t-sm); --fs-xs: var(--t-xs);
+  --fw-m: 500;  --fw-sb: 600;
+  --lh-body: 1.6;
+  --s-1: 4px;  --s-2: 8px;  --s-3: 12px; --s-4: 16px;
+  --s-5: 20px; --s-6: 24px; --s-8: 34px;
+  --bg-elev-1: var(--bg-raise);
+  --bg-elev-2: #17181D;
+  --info: var(--aqua);
+}

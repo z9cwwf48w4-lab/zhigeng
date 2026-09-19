@@ -1,0 +1,187 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#0B0C0F">
+<!-- 构建指纹：由后端在返回本文件时替换。前端拿它跟 /api/version 比对，
+     判断「软件是不是已经有新版本」，是自动更新的信号源。 -->
+<meta name="aa-build" content="__AA_BUILD__">
+<title>知更 · 替你想，该做什么</title>
+<meta name="description" content="知更不回答你的问题，它替你想该做什么。记忆会衰减，只在真正重要时出声。">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 44 44'%3E%3Crect x='1' y='1' width='42' height='42' rx='12' fill='%230B0C0F'/%3E%3Cpath d='M31.5 22a9.5 9.5 0 1 1-9.5-9.5' fill='none' stroke='%23E9EBEF' stroke-width='5' stroke-linecap='round'/%3E%3Ccircle cx='28.7' cy='15.3' r='3.1' fill='%23E5B961'/%3E%3C/svg%3E">
+<link rel="stylesheet" href="open-props.min.css?v=__AA_BUILD__">
+<link rel="stylesheet" href="tokens.css?v=__AA_BUILD__">
+<link rel="stylesheet" href="app.css?v=__AA_BUILD__">
+</head>
+<body>
+
+<!-- ════════════════════════════ 认证视图 ════════════════════════════ -->
+<div id="auth-view" class="auth" hidden>
+
+  <section class="auth-art">
+    <div class="row" style="gap:9px">
+      <svg width="34" height="34" viewBox="0 0 44 44" aria-hidden="true" class="brand-mark">
+        <rect x="1" y="1" width="42" height="42" rx="12" fill="#121317" stroke="rgba(229,185,97,.30)"/>
+        <path d="M31.5 22a9.5 9.5 0 1 1-9.5-9.5" fill="none" stroke="#E9EBEF" stroke-width="5" stroke-linecap="round"/>
+        <circle cx="28.7" cy="15.3" r="3.1" fill="#E5B961"/>
+      </svg>
+      <div>
+        <div class="brand-name">知更</div>
+        <div class="brand-sub">替你想，该做什么</div>
+      </div>
+    </div>
+
+    <div>
+      <h2>它不回答你的问题。<br>它替你想，该做什么。</h2>
+      <p class="lede">
+        别的 AI 都在等你开口。知更反过来 —— 它记得你在意的事，
+        在该动手的时候才开口；也懂得遗忘，不重要的东西会自己淡出，
+        不让噪声堆成山。
+      </p>
+
+      <div class="auth-points">
+        <div class="auth-point">
+          <span class="ico" data-icon="clock"></span>
+          <div>
+            <div class="t">会遗忘，才是记忆</div>
+            <div class="d">记忆按时间自然变淡，不重要的自动沉下去。
+              不是只增不减的数据库，更像一个脑子。</div>
+          </div>
+        </div>
+        <div class="auth-point">
+          <span class="ico" data-icon="bell"></span>
+          <div>
+            <div class="t">一天只打扰你一次</div>
+            <div class="d">够格的才出声，不够格的它自己按住。
+              安静本身是设计，不是故障。</div>
+          </div>
+        </div>
+        <div class="auth-point">
+          <span class="ico" data-icon="shield"></span>
+          <div>
+            <div class="t">它不替你按按钮</div>
+            <div class="d">涉及钱、或者任何对外发的动作，知更永远停下来问你。
+              它替你想，但不替你决定。</div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <p class="muted" style="font-size:var(--fs-sm);line-height:1.7">
+      不登录也能用 —— 记忆先存在这台设备上。登录后存进你自己的账户，
+      按登录身份隔离，并且能在别的设备上接着用。
+    </p>
+  </section>
+
+  <section class="auth-panel">
+    <!-- 登录页是**按需打开的一层**，不是门口。所以必须有一条退路：
+         用户点错了、或者只是想看看应用，得能原路返回。 -->
+    <div class="auth-topbar">
+      <button class="btn btn-ghost btn-sm" id="btn-back-app">
+        <span data-icon="chevronRight" data-icon-size="14" style="transform:rotate(180deg);display:inline-flex"></span><span>先逛逛，稍后再登录</span>
+      </button>
+    </div>
+    <div class="auth-form" id="auth-form-host">
+      <!-- 由 app.js 渲染：登录 / 注册 / 验证码 / 找回密码 -->
+    </div>
+  </section>
+</div>
+
+<!-- ════════════════════════════ 应用视图 ════════════════════════════ -->
+<div id="app-view" class="app" hidden>
+
+  <aside class="rail">
+    <div class="brand">
+      <svg width="30" height="30" viewBox="0 0 44 44" aria-hidden="true" class="brand-mark">
+        <rect x="1" y="1" width="42" height="42" rx="12" fill="#121317" stroke="rgba(229,185,97,.30)"/>
+        <path d="M31.5 22a9.5 9.5 0 1 1-9.5-9.5" fill="none" stroke="#E9EBEF" stroke-width="5" stroke-linecap="round"/>
+        <circle cx="28.7" cy="15.3" r="3.1" fill="#E5B961"/>
+      </svg>
+      <div>
+        <div class="brand-name">知更</div>
+        <div class="brand-sub">替你想，该做什么</div>
+      </div>
+    </div>
+
+    <!-- 话题列表：由 conversations.js 渲染 -->
+    <div id="conv-host"></div>
+
+    <nav class="nav" id="nav" aria-label="主导航"></nav>
+
+    <!-- 同步状态：跨设备/跨标签页的实时同步是否在跑 -->
+    <div class="sync-line" id="sync-line" title="实时同步状态"></div>
+
+    <div class="rail-foot">
+      <div class="who">
+        <span class="who-avatar" id="who-avatar">·</span>
+        <div style="min-width:0">
+          <div class="who-mail" id="who-mail">—</div>
+          <div class="who-state" id="who-state"></div>
+        </div>
+      </div>
+      <!-- 本地模式：这里是「进门」的地方，不是「出门」的。 -->
+      <button class="nav-item" id="btn-signin" hidden>
+        <span data-icon="user" data-icon-size="17"></span><span>登录 / 注册</span>
+      </button>
+      <button class="nav-item" id="btn-signout" hidden>
+        <span data-icon="logout" data-icon-size="17"></span><span>退出登录</span>
+      </button>
+    </div>
+  </aside>
+
+  <div class="main">
+    <header class="bar">
+      <div class="mobile-brand" style="display:none">
+        <svg width="26" height="26" viewBox="0 0 44 44" aria-hidden="true">
+          <rect x="1" y="1" width="42" height="42" rx="12" fill="#121317" stroke="rgba(229,185,97,.30)"/>
+          <path d="M31.5 22a9.5 9.5 0 1 1-9.5-9.5" fill="none" stroke="#E9EBEF" stroke-width="5" stroke-linecap="round"/>
+          <circle cx="28.7" cy="15.3" r="3.1" fill="#E5B961"/>
+        </svg>
+      </div>
+      <h1 id="page-title">今天</h1>
+      <span class="topbar-sub hide-mobile" id="page-sub"></span>
+      <!-- 移动端的话题切换按钮由 app.js 注入到这里 -->
+      <div class="topbar-conv" id="conv-switch-host"></div>
+      <div class="topbar-actions" id="topbar-actions"></div>
+    </header>
+
+    <!-- 本地模式横幅：陈述「你的数据现在在哪」——这件事比页面上任何内容
+         都更需要被看到。可关掉，关掉后记在 localStorage。 -->
+    <div class="local-bar" id="local-bar" hidden>
+      <span class="local-bar-ico" data-icon="info" data-icon-size="17"></span>
+      <span class="local-bar-text">
+        本地模式：记忆只存在这台设备，换设备或清缓存会丢。
+      </span>
+      <button class="btn btn-primary btn-sm" data-act="signin">登录后同步</button>
+      <button class="iconbtn" data-act="dismiss-bar" aria-label="知道了，不再提示" title="知道了，不再提示">
+        <span data-icon="x" data-icon-size="15"></span>
+      </button>
+    </div>
+
+    <main class="content col" id="content" tabindex="-1"></main>
+  </div>
+
+  <nav class="tabbar" id="tabbar" aria-label="底部导航"></nav>
+</div>
+
+<!-- ════════════════════════════ 全局容器 ════════════════════════════ -->
+<div class="toasts" id="toasts" role="status" aria-live="polite"></div>
+<div id="modal-root"></div>
+
+<!-- ════════════════════════════════════════════════════════════════════
+     资源都带 ?v=<构建指纹>：指纹变则 URL 变，浏览器必然重新拉取。
+     auto-animate（MIT）：列表增删动效，自动尊重 prefers-reduced-motion。
+     ════════════════════════════════════════════════════════════════════ -->
+<!-- 认证与数据全部走知更自己的后端（同源 /api/**），不再依赖任何平台 SDK。 -->
+<script src="auto-animate.min.js?v=__AA_BUILD__"></script>
+<script src="icons.js?v=__AA_BUILD__"></script>
+<script src="brain.js?v=__AA_BUILD__"></script>
+<script src="locals.js?v=__AA_BUILD__"></script>
+<script src="cloud.js?v=__AA_BUILD__"></script>
+<script src="sync.js?v=__AA_BUILD__"></script>
+<script src="tasks.js?v=__AA_BUILD__"></script>
+<script src="conversations.js?v=__AA_BUILD__"></script>
+<script src="app.js?v=__AA_BUILD__"></script>
+</body>
+</html>
