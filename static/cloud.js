@@ -91,7 +91,7 @@ const Cloud = (function () {
       return '手机号登录还没开通（需要先申请短信签名）。请先用邮箱验证码登录。';
     }
     if (k === 'MAIL_NOT_CONFIGURED') {
-      return '邮箱服务还没配置好，请联系运营者。';
+      return '验证码邮件服务还没开通（服务器端待配置）。请点下方「返回密码登录」，用邮箱 + 密码进入。';
     }
     if (/rate|too many|throttl|频繁/i.test(m)) return m || '操作太频繁，请稍后再试。';
     if (/network|fetch|timeout|timed out/i.test(m)) return '网络不通，请检查网络后重试。';

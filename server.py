@@ -454,6 +454,38 @@ def init_store():
         conn.executescript(SCHEMA)
 
 
+def _db_health_check():
+    """启动时给库做一次体检，坏了就删掉三件套重建。
+
+    为什么需要：部署是「合并上传」——新 zhigeng.db 会盖进去，但旧进程
+    留下的 -wal / -shm 残片不会被清掉。WAL 模式下 SQLite 打开库时会把
+    陈旧的 WAL 当真，任何真实查询直接报 malformed，表现为 login/otp
+    等接口集体 500 hang up（只读会话的接口反而看着正常）。
+    """
+    global _db
+    try:
+        conn = db()
+        conn.execute("SELECT COUNT(*) FROM users").fetchone()
+        return
+    except Exception as e:
+        print("[aa] db health check FAILED (%s) -> rebuild" % e, flush=True)
+    with _db_lock:
+        try:
+            if _db is not None:
+                _db.close()
+        except Exception:
+            pass
+        _db = None
+        for p in (DB_PATH, DB_PATH + "-wal", DB_PATH + "-shm"):
+            try:
+                if os.path.exists(p):
+                    os.remove(p)
+            except Exception:
+                pass
+    init_store()
+    print("[aa] db rebuilt clean", flush=True)
+
+
 def _row_dict(row):
     return dict(row) if row is not None else None
 
@@ -462,6 +494,36 @@ def _hash_password(password):
     salt = secrets.token_bytes(16)
     h = hashlib.scrypt(password.encode("utf-8"), salt=salt, n=16384, r=8, p=1)
     return "scrypt$%s$%s" % (salt.hex(), h.hex())
+
+
+# ── 一次性引导：运营者首个账号 ──────────────────────────────────────────
+# 仅当 users 表为空时创建一次；账号落库后本条目永远不再生效。
+# ⚠️ password 必须留空——明文密码进代码/仓库等于泄露。首次引导已完成，
+#    如需重建空库引导，临时在此填一组一次性凭据，引导完成后立即清空。
+BOOTSTRAP_OWNER = {
+    "email": "",
+    "password": "",
+}
+
+
+def _ensure_bootstrap_owner():
+    email = str(BOOTSTRAP_OWNER.get("email") or "").strip().lower()
+    pwd = str(BOOTSTRAP_OWNER.get("password") or "")
+    if not email or not pwd:
+        return
+    conn = db()
+    row = conn.execute("SELECT COUNT(*) AS n FROM users").fetchone()
+    if row and row["n"] > 0:
+        # ⚠️ 这里绝不能 close() —— db() 返回的是全局单例连接，
+        # 关掉它之后所有接口都会死于 "Cannot operate on a closed database"。
+        return
+    with conn:
+        conn.execute(
+            "INSERT INTO users (id,email,phone,phone_verified,password_hash,created_at,updated_at)"
+            " VALUES (?,?,?,?,?,?,?)",
+            (uuidlib.uuid4().hex, email, None, 0, _hash_password(pwd),
+             _iso_now(), _iso_now()))
+    print("[aa] bootstrap owner created: %s" % email, flush=True)
 
 
 def _check_password(password, stored):
@@ -1151,6 +1213,19 @@ class Handler(BaseHTTPRequestHandler):
     RELAY_LIMIT = 64 * 1024   # 请求体上限，防滥用
 
     def do_POST(self):
+        try:
+            return self._do_post_route()
+        except Exception as e:
+            # 兜底：未捕获异常不再裸抛（裸抛=连接被掐，客户端只见 hang up，
+            # 排障两眼一抹黑）。转成结构化 500，把异常类型和消息带回去。
+            try:
+                return self._json(500, {
+                    "error": "服务器内部错误：%s: %s" % (type(e).__name__, e),
+                    "code": "internal_error"})
+            except Exception:
+                pass
+
+    def _do_post_route(self):
         parsed = urllib.parse.urlparse(self.path)
         p = parsed.path
         if p == "/api/llm":
@@ -1415,6 +1490,14 @@ def main():
         print("[aa] own store ready: %s" % DB_PATH, flush=True)
     except Exception as e:
         print("[aa] store init FAILED: %s" % e, flush=True)
+    try:
+        _db_health_check()
+    except Exception as e:
+        print("[aa] db health check crashed: %s" % e, flush=True)
+    try:
+        _ensure_bootstrap_owner()
+    except Exception as e:
+        print("[aa] bootstrap owner FAILED: %s" % e, flush=True)
     threading.Thread(target=heartbeat_loop, daemon=True).start()
     threading.Thread(target=net_loop, daemon=True).start()
 
