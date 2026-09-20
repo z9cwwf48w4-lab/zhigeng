@@ -187,6 +187,10 @@ const S = {
   thinkN: 3,          // 「并行思考」并行度
   useLlm: false,      // 提案文案是否走平台大模型润色（默认关：未认证环境无法实测）
   llmModel: null,
+  unreadChat: 0,      // 知更主动开口时你不在对话页 → 角标
+  proactiveBusy: false,
+  bootedAt: 0,
+  profile: null,      // 「关于你」：称呼 / 自我介绍 / 邮箱（localStorage）
   version: { build: '', pending: null, lastCheck: null, error: null, applies: 0 },
 };
 
@@ -195,6 +199,7 @@ try {
   const n = Number(localStorage.getItem('aa.thinkN'));
   if (n === 1 || n === 3 || n === 5) S.thinkN = n;
   S.useLlm = localStorage.getItem('aa.useLlm') === '1';
+  S.profile = JSON.parse(localStorage.getItem('aa.profile.v1') || 'null') || {};
 } catch (e) { /* localStorage 被禁用时用默认值 */ }
 
 function rememberPref(k, v) {
@@ -939,16 +944,19 @@ const ROUTES = [
 function renderNav() {
   const pending = S.proposals.filter(p => !p.outcome && p.touched).length;
   $('#nav').innerHTML = ROUTES.filter(r => r.nav).map(function (r) {
-    const badge = (r.id === 'today' && pending) ? '<span class="nav-count">' + pending + '</span>' : '';
+    const badge = (r.id === 'today' && pending)
+      ? '<span class="nav-count">' + pending + '</span>'
+      : (r.id === 'chat' && S.unreadChat ? '<span class="nav-dot"></span>' : '');
     return '<button class="nav-item" data-go="' + r.id + '"' +
            (S.route === r.id ? ' aria-current="page"' : '') + '>' +
            icon(r.icon, 17) + '<span>' + r.label + '</span>' + badge + '</button>';
   }).join('');
 
   $('#tabbar').innerHTML = ROUTES.filter(r => r.nav).map(function (r) {
+    const badge = (r.id === 'chat' && S.unreadChat) ? '<span class="nav-dot"></span>' : '';
     return '<button class="tab" data-go="' + r.id + '"' +
            (S.route === r.id ? ' aria-current="page"' : '') + '>' +
-           icon(r.icon, 20) + '<span>' + r.label + '</span></button>';
+           icon(r.icon, 20) + '<span>' + r.label + '</span>' + badge + '</button>';
   }).join('');
 }
 
@@ -1230,7 +1238,48 @@ function viewSettings() {
 
   // .settings 限制整页宽度。设置项是「标签—控件」的横向关系，
   // 拉到全宽会让标签和数值隔着一整个屏幕对望。
+  const prof = S.profile || {};
+  const emailHint = prof.email
+    ? (prof.verified
+        ? '✅ 已验证。每晚它会写一封信到这里 —— 应用没开也会发。'
+        : '⚠️ 还没验证：点「验证」，去邮箱收 6 位验证码。')
+    : '把邮箱告诉它并验证后，知更想到什么会主动写到这里来 —— 睡前一封，应用没开也会发。';
   return '<div class="settings">' +
+
+  /* ── 关于你：个性化的根。它得知道在跟谁说话、怎么称呼、通过什么联系你。 ── */
+  '<section class="section">' +
+    '<div class="section-head"><h2>关于你</h2>' +
+      '<span class="muted">它知道你是谁，才谈得上主动</span></div>' +
+    '<div class="card stack">' +
+      '<div class="field">' +
+        '<label class="label" for="p-name">称呼</label>' +
+        '<input class="input" id="p-name" spellcheck="false" placeholder="它怎么叫你"' +
+          ' value="' + esc(prof.name || '') + '">' +
+      '</div>' +
+      '<div class="field">' +
+        '<label class="label" for="p-about">自我介绍</label>' +
+        '<textarea class="input" id="p-about" rows="2"' +
+          ' placeholder="一句话：你是谁、最近在忙什么">' +
+          esc(prof.about || '') + '</textarea>' +
+        '<p class="hint">这些会进入它的记忆，聊天和来信时自然用上 —— 它更懂你，而不是每次从零开始。</p>' +
+      '</div>' +
+      '<div class="field">' +
+        '<label class="label" for="p-email">邮箱 · 它主动联系你的通道</label>' +
+        '<div class="row" style="gap:8px">' +
+          '<input class="input" id="p-email" style="flex:1" spellcheck="false"' +
+            ' placeholder="you@example.com" value="' + esc(prof.email || '') + '">' +
+          '<button class="btn btn-quiet btn-sm" data-act="profile-verify">' +
+            (prof.verified ? '重新验证' : '验证') + '</button>' +
+        '</div>' +
+        '<p class="hint" id="p-email-hint">' + emailHint + '</p>' +
+      '</div>' +
+      '<div class="row" style="justify-content:flex-end;gap:8px">' +
+        '<button class="btn btn-ghost btn-sm" data-act="profile-testmail">让它现在给我写一封</button>' +
+        '<button class="btn btn-primary btn-sm" data-act="profile-save">保存档案</button>' +
+      '</div>' +
+    '</div>' +
+  '</section>' +
+
   '<section class="section">' +
       '<div class="section-head"><h2>' + (Cloud.isCloud() ? '账户' : '存储') + '</h2></div>' +
     (Cloud.isCloud() ?
@@ -1422,10 +1471,46 @@ function viewSettings() {
    对话记录只存本机 localStorage（最近 100 条），不参与记忆系统。 */
 
 const CHAT_KEY = 'aa.chat.v1';
-const CHAT_SYSTEM =
-  '你是知更，一个替用户想该做什么的助手。现在用户直接跟你对话。' +
-  '说话克制、具体、不客套，不用 markdown，不堆形容词。' +
-  '用户问该做什么时，给出明确的建议而不是罗列选项。中文回答。';
+const CHAT_SYSTEM_BASE =
+  '你是知更，一个替用户想该做什么的助手。现在用户直接跟你对话。\n' +
+  '你不是客服，也不敷衍。像熟人那样接话：\n' +
+  '- 有自己的判断。用户问该做什么，给一个明确的建议，不罗列一堆选项。\n' +
+  '- 接得住情绪和上下文，该追问就追问，别每句都自说自话。\n' +
+  '- 偶尔带出用户自己没注意到的角度。\n' +
+  '说话克制、具体，不用 markdown，不堆形容词，不用敬语。中文回答。';
+
+/** 组装知更的「自我 + 对眼前这一刻的感知」：时间、称呼、档案、在意的事、上次聊到哪。 */
+function chatSystem() {
+  const p = S.profile || {};
+  const now = new Date();
+  const wk = '日一二三四五六'[now.getDay()];
+  const hh = now.getHours();
+  const period = hh < 5 ? '深夜' : hh < 9 ? '清晨' : hh < 12 ? '上午'
+    : hh < 14 ? '中午' : hh < 18 ? '下午' : hh < 23 ? '晚上' : '深夜';
+  let s = CHAT_SYSTEM_BASE;
+  s += '\n\n现在是 ' + (now.getMonth() + 1) + ' 月 ' + now.getDate() +
+    ' 日 星期' + wk + ' ' + period + ' ' + hh + ':' +
+    String(now.getMinutes()).padStart(2, '0') +
+    '。时间感要融进语气里（深夜就低声一点），不要刻意报时。';
+  if (p.name) s += '\n用户的称呼是「' + p.name + '」，自然地用，别每句都挂。';
+  if (p.about) s += '\n用户的自我介绍：' + p.about;
+  const list = chatLog();
+  let lastUserTs = 0;
+  for (let i = list.length - 1; i >= 0; i--) {
+    if (list[i].role === 'user' && list[i].t) { lastUserTs = list[i].t; break; }
+  }
+  if (lastUserTs) {
+    const gapH = (Date.now() - lastUserTs) / 3600000;
+    if (gapH >= 1) {
+      const g = gapH >= 24 ? Math.round(gapH / 24) + ' 天' : Math.round(gapH) + ' 个小时';
+      s += '\n距离上次说话已经过去约 ' + g + '。重新接上时要体现你记得聊到哪，别装作刚认识。';
+    }
+  }
+  const mem = S.memories.filter(m => !m.archived).slice(0, 8)
+    .map(m => '- ' + m.content).join('\n');
+  if (mem) s += '\n\n你记着的、用户在意的事（聊到相关话题时自然提起）：\n' + mem;
+  return s;
+}
 
 function chatLog() {
   try { return JSON.parse(localStorage.getItem(CHAT_KEY) || '[]') || []; }
@@ -1443,9 +1528,15 @@ function viewChat() {
     msgs = '<div class="chat-empty">' + icon('chat', 30) +
       '<p>跟它聊点什么。比如：我今天该先做什么？</p></div>';
   } else {
-    msgs = list.map(function (m) {
-      return '<div class="chat-row ' + (m.role === 'user' ? 'me' : 'ai') + '">' +
-        '<div class="chat-bubble">' + esc(m.content).replace(/\n/g, '<br>') + '</div></div>';
+    msgs = list.map(function (m, i) {
+      const mark = m.proactive
+        ? '<div class="chat-mark">' + icon('sparkle', 12) + '它先开口</div>' : '';
+      const rem = (m.role === 'user' && !m.mem)
+        ? '<button class="link chat-rem" data-act="chat-remember" data-i="' + i + '">' +
+          '记进它在意的</button>' : '';
+      return '<div class="chat-row ' + (m.role === 'user' ? 'me' : 'ai') + '">' + mark +
+        '<div class="chat-bubble">' + esc(m.content).replace(/\n/g, '<br>') +
+        (rem ? '<span class="chat-rem-row">' + rem + '</span>' : '') + '</div></div>';
     }).join('');
   }
   if (S.chatBusy) {
@@ -1493,9 +1584,7 @@ async function chatSend() {
 /** 组装上下文（带它「在意的」几条）并打给中继。cfg 为空 → 服务端默认模型。 */
 async function chatComplete(list) {
   const cfg = readLlmPref();
-  const mem = S.memories.filter(m => !m.archived).slice(0, 8)
-    .map(m => '- ' + m.content).join('\n');
-  const sys = CHAT_SYSTEM + (mem ? '\n\n用户最近在意的事：\n' + mem : '');
+  const sys = chatSystem();
   const msgs = [{ role: 'system', content: sys }]
     .concat(list.map(m => ({ role: m.role, content: m.content })));
   const body = cfg
@@ -1515,6 +1604,102 @@ async function chatComplete(list) {
   return String(txt).trim();
 }
 
+/* ── 主动开口 ──────────────────────────────────────────────────────────
+   「主动」是知更的本分，不是彩蛋：隔了一阵没聊、或今天第一次露面，
+   它先说第一句。节流三重保险：两次主动至少隔 4 小时、一天最多 2 次、
+   距上一次任何对话至少 4 小时。你不在对话页 → 顶栏角标 + 桌面通知。 */
+
+const PROACTIVE_KEY = 'aa.proactive.v1';
+const PROACTIVE_MIN_GAP = 4 * 3600e3;    // 两次主动开口的最小间隔
+const PROACTIVE_TALK_GAP = 4 * 3600e3;   // 距上次任何对话的最小间隔
+const PROACTIVE_MAX_PER_DAY = 2;
+
+function proactiveState() {
+  try { return JSON.parse(localStorage.getItem(PROACTIVE_KEY) || '{}') || {}; }
+  catch (e) { return {}; }
+}
+function proactiveSave(st) {
+  try { localStorage.setItem(PROACTIVE_KEY, JSON.stringify(st)); } catch (e) {}
+}
+
+function chatLastTs() {
+  const l = chatLog();
+  for (let i = l.length - 1; i >= 0; i--) if (l[i].t) return l[i].t;
+  return 0;
+}
+
+async function maybeProactive(force) {
+  if (!S.booted || S.chatBusy || S.proactiveBusy) return;
+  const st = proactiveState();
+  const now = Date.now();
+  const today = new Date().toDateString();
+  if (st.day !== today) { st.day = today; st.count = 0; }
+  if (!force) {
+    if ((st.count || 0) >= PROACTIVE_MAX_PER_DAY) return;
+    if (st.lastAt && now - st.lastAt < PROACTIVE_MIN_GAP) return;
+    const lastTalk = chatLastTs();
+    if (lastTalk && now - lastTalk < PROACTIVE_TALK_GAP) return;
+    if (S.bootedAt && now - S.bootedAt < 30e3) return;   // 刚进应用，先让人喘口气
+  }
+  S.proactiveBusy = true;
+  try {
+    const txt = await proactiveCompose();
+    if (!txt) return;
+    const list = chatLog();
+    list.push({ role: 'assistant', content: txt, t: now, proactive: true });
+    chatSave(list);
+    st.lastAt = now; st.count = (st.count || 0) + 1;
+    proactiveSave(st);
+    if (S.route === 'chat') {
+      render();
+    } else {
+      S.unreadChat = (S.unreadChat || 0) + 1;
+      renderNav();
+      if (typeof Notification !== 'undefined' && Notification.permission === 'granted') {
+        try { new Notification('知更来找你了', { body: txt.slice(0, 90) }); } catch (e) {}
+      }
+    }
+  } catch (e) { /* 主动开口失败不影响主流程 */ }
+  finally { S.proactiveBusy = false; }
+}
+
+async function proactiveCompose() {
+  const sys = chatSystem() +
+    '\n\n现在的情况：你有一阵子没跟用户说话了，你来主动开一次口。' +
+    '一到两句话，像熟人随口搭话——从时间、你在意的事、或上次的话题接下去，' +
+    '或者问他最近怎么样。禁止「有什么可以帮你的吗」这类客服话术。直接输出要说的话。';
+  const recent = chatLog().slice(-4)
+    .map(m => (m.role === 'user' ? '用户：' : '知更：') + String(m.content).slice(0, 60));
+  const msgs = [{ role: 'system', content: sys }];
+  if (recent.length) {
+    msgs.push({ role: 'user',
+      content: '（最近聊过的片段，供你参考，不必逐条回应）\n' + recent.join('\n') });
+  }
+  try {
+    const cfg = readLlmPref();
+    const body = cfg
+      ? { base_url: cfg.baseUrl, api_key: cfg.apiKey, model: cfg.model, messages: msgs }
+      : { messages: msgs };
+    const r = await fetch('/api/llm', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+    });
+    const j = await r.json();
+    const txt = j && j.choices && j.choices[0] && j.choices[0].message &&
+                j.choices[0].message.content;
+    if (r.ok && txt) return String(txt).trim().slice(0, 300);
+  } catch (e) { /* 落到模板兜底 */ }
+  // 兜底：没有模型也保证主动开口能落地
+  const m = S.memories.filter(x => !x.archived)[0];
+  const gap = chatLastTs() ? (Date.now() - chatLastTs()) / 3600000 : 0;
+  const gtxt = gap >= 24 ? Math.round(gap / 24) + ' 天'
+    : Math.max(1, Math.round(gap)) + ' 个小时';
+  return m
+    ? ('有一阵子没聊了——' + gtxt + '。你记的那句「' + String(m.content).slice(0, 24) +
+       '」，最近有进展吗？')
+    : ('又见面了。隔了' + gtxt + '，最近怎么样？');
+}
+
 const TITLES = {
   today:    { t: '今天',     s: '只有一件需要你动手' },
   chat:     { t: '对话',     s: '跟它直接聊' },
@@ -1529,6 +1714,7 @@ function go(route) {
   if (route === 'memory') route = 'care';
   if (route === 'history') route = 'timeline';
   S.route = ROUTES.some(r => r.id === route) ? route : 'today';
+  if (S.route === 'chat') { S.unreadChat = 0; }
   render();
   const c = $('#content');
   if (c) c.scrollTop = 0;
@@ -1641,6 +1827,11 @@ function bindApp() {
       e.preventDefault();
       chatSend();
     }
+  });
+
+  // 回到前台时看一眼：是不是到它主动开口的时候了
+  document.addEventListener('visibilitychange', function () {
+    if (!document.hidden) maybeProactive(false);
   });
 
   // 对话相关动作：侧栏与顶栏都在 #content 之外，走 document 级委托
@@ -1770,6 +1961,79 @@ function bindApp() {
 
     if (act === 'change-pwd') {
       return openChangePassword();
+    }
+
+    /* ── 关于你：保存档案（顺带触发邮箱验证码） / 验证 / 立即来信 ── */
+    if (act === 'profile-save' || act === 'profile-verify') {
+      const name = $('#p-name').value.trim();
+      const about = $('#p-about').value.trim();
+      const email = $('#p-email').value.trim().toLowerCase();
+      if (act === 'profile-verify' && !email) {
+        return toast('先填一个邮箱。', 'err');
+      }
+      return withBusy(async () => {
+        S.profile = Object.assign({}, S.profile, { name, about, email });
+        try { localStorage.setItem('aa.profile.v1', JSON.stringify(S.profile)); } catch (e) {}
+        let j = {};
+        try {
+          const r = await fetch('/api/owner', {
+            method: 'POST', headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ name, about, email: email || undefined }),
+          });
+          j = await r.json();
+          if (!r.ok) throw new Error(j.error || ('HTTP ' + r.status));
+        } catch (e) {
+          toast('档案已存本机，但服务端没存上：' + e.message, 'err');
+          return;
+        }
+        render();
+        if (j.otp_id) {
+          if (j.verify_sent) {
+            toast('验证码已发到 ' + email + '，去收信。', 'ok');
+            openOwnerVerify(j.otp_id);
+          } else if (j.needs_smtp) {
+            toast('服务端还没配发件邮箱（需 QQ 邮箱 SMTP 授权码），验证码暂时发不出。', 'err');
+          } else {
+            toast('验证码发送失败：' + (j.detail || '未知原因'), 'err');
+          }
+        } else if (act === 'profile-verify') {
+          toast('这个邮箱已经验证过了。', 'info');
+        } else {
+          toast('档案已保存。它知道你是谁了。', 'ok');
+        }
+      });
+    }
+
+    if (act === 'profile-testmail') {
+      return withBusy(async () => {
+        let j;
+        try {
+          const r = await fetch('/api/owner/test-mail', { method: 'POST' });
+          j = await r.json();
+          if (!r.ok) throw new Error(j.error || ('HTTP ' + r.status));
+        } catch (e) {
+          return toast(e.message, 'err');
+        }
+        toast(j.message || '已发出。', 'ok');
+      });
+    }
+
+    /* ── 对话里随手「记住」：把这句话写进它在意的 ── */
+    if (act === 'chat-remember') {
+      const list = chatLog();
+      const m = list[Number(t.dataset.i)];
+      if (!m || m.role !== 'user' || m.mem) return;
+      return withBusy(async () => {
+        const rows = await Cloud.data.insertMemories(
+          [{ content: m.content, tier: 'normal', base_weight: 0.6, lock: false }],
+          S.convId);
+        (rows || []).forEach(r => S.memories.push(r));
+        m.mem = true;
+        chatSave(list);
+        await Sync.bump('remember');
+        render();
+        toast('已记进「它在意的」。', 'ok');
+      });
     }
 
     if (act === 'signin') {
@@ -1985,6 +2249,48 @@ function openChangePassword() {
         toast('密码已修改。', 'ok');
       } catch (e) {
         err.textContent = Cloud.humanize(e);
+      }
+    });
+  });
+}
+
+/** 邮箱验证码弹窗：拿到 /api/owner 返回的 otp_id 后调。 */
+function openOwnerVerify(otpId) {
+  const form = document.createElement('div');
+  form.className = 'stack';
+  form.innerHTML =
+    '<p class="hint">验证码已发到你刚填的邮箱（可能在订阅/垃圾邮件里）。</p>' +
+    '<div class="field">' +
+      '<label class="label" for="ov-code">6 位验证码</label>' +
+      '<input class="input" id="ov-code" inputmode="numeric" maxlength="6"' +
+        ' autocomplete="one-time-code" placeholder="123456">' +
+    '</div>';
+  return modal({
+    title: '验证你的邮箱',
+    body: form,
+    actions: [
+      { label: '取消', value: null, kind: 'btn-ghost' },
+      { label: '确认', value: 'ok', kind: 'btn-primary' },
+    ],
+  }).then(async function (v) {
+    if (v !== 'ok') return;
+    const code = $('#ov-code', form).value.trim();
+    if (!code) return;
+    return withBusy(async () => {
+      try {
+        const r = await fetch('/api/owner/verify', {
+          method: 'POST', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ otp_id: otpId, code }),
+        });
+        const j = await r.json();
+        if (!r.ok) throw new Error(j.error || ('HTTP ' + r.status));
+        S.profile = Object.assign({}, S.profile, { verified: true });
+        try { localStorage.setItem('aa.profile.v1', JSON.stringify(S.profile)); } catch (e) {}
+        render();
+        toast('邮箱验证完成。它现在可以主动给你写信了。', 'ok');
+      } catch (e) {
+        toast('验证没通过：' + e.message, 'err');
+        openOwnerVerify(otpId);   // 没过就再给一次输入机会
       }
     });
   });
@@ -2264,6 +2570,7 @@ function updateWhoState() {
 async function enterLocal() {
   Cloud.setMode('local');
   S.user = null;
+  S.bootedAt = Date.now();
 
   await Convos.ensure();
   await loadAll();
@@ -2276,6 +2583,26 @@ async function enterLocal() {
   $('#app-view').hidden = false;
   paintIdentity();
   updateWhoState();
+
+  /* 档案与服务端对一次表：验证状态、发件配置只有服务端知道 */
+  (async function () {
+    try {
+      const r = await fetch('/api/owner');
+      if (!r.ok) return;
+      const j = await r.json();
+      S.ownerInfo = j;
+      if (S.profile && S.profile.email === j.email && S.profile.verified !== j.email_verified) {
+        S.profile.verified = j.email_verified;
+        try { localStorage.setItem('aa.profile.v1', JSON.stringify(S.profile)); } catch (e) {}
+        if (S.route === 'settings') render();
+      }
+    } catch (e) { /* 服务端不在也无所谓，档案在本地 */ }
+  })();
+
+  /* 主动开口：进应用让它先坐 35 秒（别一开门就搭话），再看时机开口；
+     之后每 3 分钟看一眼 —— 隔了 4 小时以上没聊才算够格。 */
+  setTimeout(function () { maybeProactive(false); }, 35e3);
+  setInterval(function () { maybeProactive(false); }, 3 * 60e3);
 
   Sync.setLocalOnly(true);
   Sync.start();

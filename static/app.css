@@ -733,3 +733,31 @@ textarea.input { resize: vertical; min-height: 72px; line-height: 1.6; }
 }
 .chat-input { flex: 1; resize: none; }
 .chat-foot { text-align: center; padding-top: var(--s-2); }
+
+/* ── 主动开口：标记 / 角标 / 记住按钮 ─────────────────────────────── */
+.chat-mark {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-size: var(--fs-xs);
+  color: var(--ink-3);
+  margin: 0 0 4px 2px;
+}
+.chat-rem-row { display: block; margin-top: 6px; }
+.chat-rem {
+  font-size: var(--fs-xs);
+  color: inherit;
+  opacity: 0.55;
+}
+.chat-row.me .chat-rem { color: var(--gold-ink); }
+.chat-rem:hover { opacity: 1; }
+.nav-dot {
+  position: absolute;
+  top: 8px;
+  right: 10px;
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--gold);
+}
+.nav-item, .tab { position: relative; }

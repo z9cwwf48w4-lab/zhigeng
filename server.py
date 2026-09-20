@@ -34,6 +34,7 @@
 """
 
 import hashlib
+import html as _html
 import json
 import os
 import platform
@@ -317,6 +318,7 @@ DB_PATH = os.path.join(DATA_DIR, "zhigeng.db")
 MAIL_CFG_PATH = os.path.join(DATA_DIR, "mail.json")
 SMS_CFG_PATH = os.path.join(DATA_DIR, "sms.json")
 LLM_CFG_PATH = os.path.join(DATA_DIR, "llm.json")
+OWNER_PATH = os.path.join(DATA_DIR, "owner.json")
 
 OTP_TTL = 10 * 60            # 验证码 10 分钟有效
 OTP_RESEND_COOLDOWN = 60     # 同一目标 60 秒内只能发一次
@@ -603,6 +605,222 @@ def send_otp_mail(to, code):
             smtp.quit()
         except Exception:
             pass
+
+
+# ── 主人档案 + 主动来信 ─────────────────────────────────────────────────
+# 「知更主动联系用户」在服务端的两条腿：
+#   ① 主人档案（data/owner.json）—— 称呼/介绍/已验证邮箱，运行时可写；
+#   ② 每晚定时给已验证邮箱写一封信（LLM 生成，模板兜底）。
+# SMTP 未配置（缺授权码）时链条停在验证码那一步，不会误发。
+
+def owner_profile():
+    try:
+        with open(OWNER_PATH, "r", encoding="utf-8") as f:
+            d = json.load(f)
+        if isinstance(d, dict):
+            return d
+    except Exception:
+        pass
+    return {}
+
+
+def save_owner_profile(patch):
+    os.makedirs(DATA_DIR, exist_ok=True)
+    d = owner_profile()
+    d.update(patch)
+    tmp = OWNER_PATH + ".tmp"
+    with open(tmp, "w", encoding="utf-8") as f:
+        json.dump(d, f, ensure_ascii=False, indent=2)
+    os.replace(tmp, OWNER_PATH)
+    return d
+
+
+def llm_generate(messages, timeout=45, max_tokens=500):
+    """服务端侧的一次 LLM 调用（用 default_llm_config，给主动来信用）。"""
+    cfg = default_llm_config()
+    if not cfg:
+        raise RuntimeError("LLM_NOT_CONFIGURED")
+    upstream = cfg["base_url"].rstrip("/") + "/chat/completions"
+    body = json.dumps({
+        "model": cfg.get("model") or "deepseek-chat",
+        "messages": messages,
+        "stream": False,
+        "max_tokens": max_tokens,
+    }).encode("utf-8")
+    req = urllib.request.Request(upstream, data=body, method="POST", headers={
+        "Content-Type": "application/json",
+        "Authorization": "Bearer " + cfg["api_key"],
+    })
+    ctx = ssl.create_default_context()
+    with urllib.request.urlopen(req, timeout=timeout, context=ctx) as resp:
+        j = json.loads(resp.read(512 * 1024).decode("utf-8"))
+    return ((j.get("choices") or [{}])[0].get("message") or {}).get("content") or ""
+
+
+def _bj_now():
+    """服务器时区不可信（云端多为 UTC），主动来信的「晚上几点」按北京时间算。"""
+    return datetime.now(timezone.utc).astimezone(timezone(timedelta(hours=8)))
+
+
+def owner_memories(limit=12):
+    """主人写下的「在意的事」。应用是单用户形态，直接取全局最近未归档的。"""
+    try:
+        conn = db()
+        rows = conn.execute(
+            "SELECT content FROM memories WHERE archived=0 AND content IS NOT NULL "
+            "AND content != '' ORDER BY updated_at DESC LIMIT ?", (limit,)).fetchall()
+        return [r["content"] for r in rows if r["content"]]
+    except Exception:
+        return []
+
+
+_LETTER_SYSTEM = (
+    "你是知更，一个替用户想该做什么的助手。现在你要主动给用户写一段话（不是回复，是你先开口）。"
+    "要求：3-5 句，像熟人随口写来的短笺——可以从时间、季节、用户在意的事接下去，"
+    "问候具体、有内容；禁止「希望这封信找到你时一切都好」这类客套话，"
+    "禁止问「有什么可以帮你的」。不用 markdown，不用敬语，中文。")
+
+
+def proactive_letter(context_hint=None):
+    """写一封信的正文。LLM 可用就让它写，失败退回模板兜底。"""
+    prof = owner_profile()
+    bj = _bj_now()
+    parts = ["现在是北京时间 %s，%s。" % (
+        bj.strftime("%H:%M"), "星期" + "一二三四五六日"[bj.weekday()])]
+    if prof.get("name"):
+        parts.append("用户称呼你叫「%s」。" % prof["name"])
+    if prof.get("about"):
+        parts.append("用户的自我介绍：%s" % prof["about"])
+    mems = owner_memories()
+    if mems:
+        parts.append("用户写下的、在意的事：\n" + "\n".join("- " + m for m in mems))
+    parts.append(context_hint or "写一封晚间的主动问候。")
+    try:
+        txt = llm_generate([
+            {"role": "system", "content": _LETTER_SYSTEM},
+            {"role": "user", "content": "\n".join(parts)},
+        ])
+        txt = txt.strip().strip('"')
+        if txt:
+            return txt[:800]
+    except Exception:
+        pass
+    # 模板兜底：没有 LLM 也要能落一封信在邮箱里
+    pick = mems[0] if mems else None
+    name = prof.get("name") or ""
+    if pick:
+        return ("晚上好%s。睡前想起你记的那件事——「%s」。"
+                "今天有往前挪一步吗？没有也没关系，明天它还在。" % (name, pick[:40]))
+    return ("晚上好%s。今天到这里就好。把没做完的事放下，明天它不会跑。" % name)
+
+
+_MAIL_SHELL = """<div style="font-family:-apple-system,'PingFang SC','Microsoft YaHei',sans-serif;max-width:520px;margin:0 auto;padding:32px 24px;color:#1c1d21">
+  <div style="display:flex;align-items:center;gap:10px;margin-bottom:24px">
+    <div style="width:38px;height:38px;border-radius:11px;background:#0B0C0F;display:inline-flex;align-items:center;justify-content:center">
+      <span style="color:#E5B961;font-size:20px;font-weight:700">知</span>
+    </div>
+    <div><div style="font-size:17px;font-weight:700">知更</div>
+    <div style="font-size:12px;color:#8a8b90">替你想，该做什么</div></div>
+  </div>
+  {body}
+  <p style="font-size:12px;color:#8a8b90;margin-top:28px;border-top:1px solid #eee;padding-top:14px">
+  这封信是知更自己写的、自己发的。不想收的话，去应用设置里把邮箱清掉。</p>
+</div>"""
+
+
+def _mail_html(paragraphs):
+    body = "".join(
+        '<p style="font-size:15px;line-height:1.8;margin:0 0 14px">%s</p>' % _html.escape(p)
+        for p in paragraphs if p and p.strip())
+    return _MAIL_SHELL.replace("{body}", body)
+
+
+def send_owner_mail(to, subject, text):
+    """知更署名的一封信。text 里空行分段。"""
+    cfg = mail_config()
+    if not cfg:
+        raise RuntimeError("MAIL_NOT_CONFIGURED")
+    paras = [p.strip() for p in re.split(r"\n\s*\n|\n", text) if p.strip()]
+    msg = MIMEMultipart("alternative")
+    msg["Subject"] = Header(subject, "utf-8")
+    msg["From"] = formataddr((str(Header(cfg.get("sender_name", "知更"), "utf-8")), cfg["user"]))
+    msg["To"] = to
+    msg.attach(MIMEText(text, "plain", "utf-8"))
+    msg.attach(MIMEText(_mail_html(paras), "html", "utf-8"))
+    ctx = ssl.create_default_context()
+    port = int(cfg.get("port") or 465)
+    if port == 465:
+        smtp = smtplib.SMTP_SSL(cfg["host"], port, timeout=15, context=ctx)
+    else:
+        smtp = smtplib.SMTP(cfg["host"], port, timeout=15)
+        smtp.starttls(context=ctx)
+    try:
+        smtp.login(cfg["user"], cfg["pass"])
+        smtp.sendmail(cfg["user"], [to], msg.as_string())
+    finally:
+        try:
+            smtp.quit()
+        except Exception:
+            pass
+
+
+_VERIFY_MAIL_HTML = """<div style="font-family:-apple-system,'PingFang SC','Microsoft YaHei',sans-serif;max-width:520px;margin:0 auto;padding:32px 24px;color:#1c1d21">
+  <div style="display:flex;align-items:center;gap:10px;margin-bottom:28px">
+    <div style="width:38px;height:38px;border-radius:11px;background:#0B0C0F;display:inline-flex;align-items:center;justify-content:center">
+      <span style="color:#E5B961;font-size:20px;font-weight:700">知</span>
+    </div>
+    <div><div style="font-size:17px;font-weight:700">知更</div>
+    <div style="font-size:12px;color:#8a8b90">替你想，该做什么</div></div>
+  </div>
+  <p style="font-size:15px;line-height:1.7;margin:0 0 18px">把你的邮箱告诉知更，验证一下：</p>
+  <div style="font-size:34px;font-weight:800;letter-spacing:10px;background:#f5f5f7;border-radius:12px;padding:18px 0;text-align:center;margin-bottom:18px">{code}</div>
+  <p style="font-size:13px;color:#8a8b90;line-height:1.8;margin:0">10 分钟内有效。验证之后，知更想到什么会写到这里来。</p>
+</div>"""
+
+
+def send_owner_verify_mail(to, code):
+    cfg = mail_config()
+    if not cfg:
+        raise RuntimeError("MAIL_NOT_CONFIGURED")
+    msg = MIMEMultipart("alternative")
+    msg["Subject"] = Header("知更 · 邮箱验证码 %s" % code, "utf-8")
+    msg["From"] = formataddr((str(Header(cfg.get("sender_name", "知更"), "utf-8")), cfg["user"]))
+    msg["To"] = to
+    msg.attach(MIMEText("你的知更邮箱验证码是 %s，10 分钟内有效。" % code, "plain", "utf-8"))
+    msg.attach(MIMEText(_VERIFY_MAIL_HTML.replace("{code}", code), "html", "utf-8"))
+    ctx = ssl.create_default_context()
+    port = int(cfg.get("port") or 465)
+    if port == 465:
+        smtp = smtplib.SMTP_SSL(cfg["host"], port, timeout=15, context=ctx)
+    else:
+        smtp = smtplib.SMTP(cfg["host"], port, timeout=15)
+        smtp.starttls(context=ctx)
+    try:
+        smtp.login(cfg["user"], cfg["pass"])
+        smtp.sendmail(cfg["user"], [to], msg.as_string())
+    finally:
+        try:
+            smtp.quit()
+        except Exception:
+            pass
+
+
+def proactive_mail_loop():
+    """每晚 21 点后（北京时间）给已验证邮箱写一封信，一天最多一封。"""
+    while True:
+        try:
+            prof = owner_profile()
+            bj = _bj_now()
+            today = bj.strftime("%Y-%m-%d")
+            if (bj.hour >= 21 and prof.get("email") and prof.get("email_verified")
+                    and prof.get("last_letter_date") != today and mail_config()):
+                text = proactive_letter()
+                send_owner_mail(prof["email"], "知更 · 晚间来信", text)
+                save_owner_profile({"last_letter_date": today})
+                print("[aa] proactive letter sent to %s" % prof["email"], flush=True)
+        except Exception as e:
+            print("[aa] proactive letter failed: %s: %s" % (type(e).__name__, e), flush=True)
+        time.sleep(600)
 
 
 # ── 验证码 ───────────────────────────────────────────────────────────────
@@ -1158,6 +1376,17 @@ class Handler(BaseHTTPRequestHandler):
                 "ok": True, "boot": _state["boot_count"], "build": BUILD,
                 "service": "aa"}))
 
+        if path == "/api/owner":
+            prof = owner_profile()
+            return self._json(200, {
+                "name": prof.get("name") or "",
+                "about": prof.get("about") or "",
+                "email": prof.get("email") or "",
+                "email_verified": bool(prof.get("email_verified")),
+                "mail_configured": bool(mail_config()),
+                "llm_ready": bool(default_llm_config()),
+            })
+
         if path == "/api/version":
             return self._send(200, json.dumps({
                 "build": BUILD,
@@ -1238,6 +1467,12 @@ class Handler(BaseHTTPRequestHandler):
         p = parsed.path
         if p == "/api/llm":
             return self._relay_llm()
+        if p == "/api/owner":
+            return self._owner_save()
+        if p == "/api/owner/verify":
+            return self._owner_verify()
+        if p == "/api/owner/test-mail":
+            return self._owner_test_mail()
         if p in ("/api/auth/send-otp", "/api/auth/send-sms"):
             return self._auth_send_otp(p == "/api/auth/send-sms")
         if p == "/api/auth/verify-otp":
@@ -1485,6 +1720,86 @@ class Handler(BaseHTTPRequestHandler):
         except Exception as e:
             return self._send(502, json.dumps({"error": "%s: %s" % (type(e).__name__, e)}))
 
+    # ── 主人档案：保存 / 验证邮箱 / 立即来信 ─────────────────────────
+    _EMAIL_RE = re.compile(r"^[^@\s]+@[^@\s]+\.[^@\s]+$")
+
+    def _owner_save(self):
+        try:
+            body = self._json_body()
+        except ValueError as e:
+            return self._json(400, {"error": str(e)})
+        patch = {}
+        if "name" in body:
+            patch["name"] = str(body["name"]).strip()[:40]
+        if "about" in body:
+            patch["about"] = str(body["about"]).strip()[:600]
+        resp = {"ok": True}
+        email = str(body.get("email") or "").strip().lower()
+        if email:
+            if not self._EMAIL_RE.match(email):
+                return self._json(400, {"error": "邮箱格式看起来不对"})
+            prof = owner_profile()
+            if email != prof.get("email"):
+                # 邮箱变了：旧验证作废，重新走验证码（防 SMTP 被当枪使）
+                patch.update({"email": email, "email_verified": False,
+                              "pending_email": email})
+                otp_id, code, err = create_otp(email, "email", "owner_verify")
+                if err:
+                    return self._json(429, {"error": err})
+                resp["otp_id"] = otp_id
+                if mail_config():
+                    try:
+                        send_owner_verify_mail(email, code)
+                        resp["verify_sent"] = True
+                    except Exception as e:
+                        resp["verify_sent"] = False
+                        resp["detail"] = "%s: %s" % (type(e).__name__, e)
+                else:
+                    resp["verify_sent"] = False
+                    resp["needs_smtp"] = True
+            save_owner_profile(patch)
+        else:
+            save_owner_profile(patch)
+        return self._json(200, resp)
+
+    def _owner_verify(self):
+        try:
+            body = self._json_body()
+        except ValueError as e:
+            return self._json(400, {"error": str(e)})
+        prof = owner_profile()
+        target = prof.get("pending_email") or prof.get("email")
+        if not target:
+            return self._json(400, {"error": "先填邮箱再验证"})
+        ok = consume_otp(str(body.get("otp_id") or ""), target, "owner_verify",
+                         str(body.get("code") or ""))
+        if ok is not True:
+            return self._json(400, {"error": ok})
+        save_owner_profile({"email_verified": True})
+        return self._json(200, {"ok": True, "email": target})
+
+    def _owner_test_mail(self):
+        prof = owner_profile()
+        if not prof.get("email"):
+            return self._json(400, {"error": "先在设置里填邮箱"})
+        if not prof.get("email_verified"):
+            return self._json(400, {"error": "邮箱还没验证，先收验证码确认是你"})
+        if not mail_config():
+            return self._json(400, {
+                "error": "服务端还没有配置发件邮箱（需要 QQ 邮箱的 SMTP 授权码），"
+                         "配好之后这封信才能真正发出。"})
+        try:
+            text = proactive_letter(
+                context_hint="用户刚点下「让它现在给我写一封」——这是一封即时的信，"
+                             "简短、自然，两三句话就好。")
+            send_owner_mail(prof["email"], "知更 · 顺手写给你的", text)
+        except RuntimeError as e:
+            return self._json(400, {"error": str(e)})
+        except Exception as e:
+            return self._json(502, {"error": "发信失败：%s: %s" % (type(e).__name__, e)})
+        return self._json(200, {"ok": True,
+                                "message": "已发出。去邮箱看看（可能在订阅/垃圾邮件里）。"})
+
     def log_message(self, fmt, *args):
         # 只在真正的错误上出声，正常运行不打日志（避免噪声淹没探针输出）
         if args and str(args[0]).startswith(("4", "5")):
@@ -1508,6 +1823,7 @@ def main():
         print("[aa] bootstrap owner FAILED: %s" % e, flush=True)
     threading.Thread(target=heartbeat_loop, daemon=True).start()
     threading.Thread(target=net_loop, daemon=True).start()
+    threading.Thread(target=proactive_mail_loop, daemon=True).start()
 
     port = int(os.environ.get("PORT", "8080"))
     srv = ThreadingHTTPServer(("0.0.0.0", port), Handler)
