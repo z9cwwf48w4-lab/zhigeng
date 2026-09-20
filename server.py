@@ -312,6 +312,7 @@ def safe_path(url_path):
 # ═════════════════════════════════════════════════════════════════════════
 
 DATA_DIR = os.path.join(HERE, "data")
+BASE_DIR = HERE
 DB_PATH = os.path.join(DATA_DIR, "zhigeng.db")
 MAIL_CFG_PATH = os.path.join(DATA_DIR, "mail.json")
 SMS_CFG_PATH = os.path.join(DATA_DIR, "sms.json")
@@ -1039,15 +1040,22 @@ def send_otp_sms(phone, code):
 
 
 def default_llm_config():
-    """服务端默认大模型（可选）。用户没在设置里接自己的模型时，润色走这里。"""
-    try:
-        with open(LLM_CFG_PATH, "r", encoding="utf-8") as f:
-            cfg = json.load(f)
-        if cfg.get("base_url") and cfg.get("api_key"):
-            cfg.setdefault("model", "deepseek-chat")
-            return cfg
-    except Exception:
-        pass
+    """服务端默认大模型（可选）。用户没在设置里接自己的模型时，润色/对话走这里。
+
+    两个来源，按优先级：
+    1. data/llm.json —— 运行时写进来的（不会被 git 跟踪）
+    2. llm.default.json（项目根目录）—— 部署时随包上传的私有配置。
+       必须写进 .gitignore，绝不能进公开仓库。
+    """
+    for path in (LLM_CFG_PATH, os.path.join(BASE_DIR, "llm.default.json")):
+        try:
+            with open(path, "r", encoding="utf-8") as f:
+                cfg = json.load(f)
+            if cfg.get("base_url") and cfg.get("api_key"):
+                cfg.setdefault("model", "deepseek-chat")
+                return cfg
+        except Exception:
+            continue
     return None
 
 

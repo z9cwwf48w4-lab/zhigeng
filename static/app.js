@@ -929,6 +929,7 @@ async function submitOutcome(proposal, outcome) {
    后者是低频操作，收在顶栏齿轮和移动端顶部按钮里。 */
 const ROUTES = [
   { id: 'today',    label: '今天',     icon: 'radar',   nav: true },
+  { id: 'chat',     label: '对话',     icon: 'chat',    nav: true },
   { id: 'timeline', label: '时间线',   icon: 'clock',   nav: true },
   { id: 'care',     label: '它在意的', icon: 'layers',  nav: true },
   { id: 'think',    label: '它在想',   icon: 'sparkle', nav: false },
@@ -1250,16 +1251,13 @@ function viewSettings() {
       '<div class="row-between">' +
         '<div class="row" style="gap:var(--s-3)">' +
           '<span class="who-avatar">本</span>' +
-          '<div><div style="font-weight:var(--fw-sb)">本地模式</div>' +
+          '<div><div style="font-weight:var(--fw-sb)">本机存储</div>' +
           '<div class="muted" style="font-size:var(--fs-sm)">' +
-            '数据存在这台设备的浏览器里，没有上传。</div></div>' +
+            '数据存在这台设备的浏览器里，打开即用。</div></div>' +
         '</div>' +
-        '<button class="btn btn-primary btn-sm" data-act="signin">登录 / 注册</button>' +
       '</div>' +
       '<div class="divider"></div>' +
-      '<p class="hint">换设备、换浏览器、或清理浏览器数据都会让这些记忆消失。' +
-        '登录后可以把它存进账号并跨设备同步 —— 迁移只在账号还空着的时候进行，' +
-        '不会覆盖你已有的数据。</p>' +
+      '<p class="hint">换设备、换浏览器、或清理浏览器数据会让这些记忆消失。</p>' +
     '</div>') +
   '</section>' +
 
@@ -1417,8 +1415,109 @@ function viewSettings() {
 
 /* ══ 8 · 路由 ═════════════════════════════════════════════════════════ */
 
+/* ══ 对话：跟它直接聊 ══════════════════════════════════════════════════
+   登录下线后知更的第一个「正面能力」：用户说一句，它答一句。
+   走同源 /api/llm 中继 —— key 在服务端（llm.default.json）或用户自己
+   在设置里填的（readLlmPref），浏览器永不明文保存服务端密钥。
+   对话记录只存本机 localStorage（最近 100 条），不参与记忆系统。 */
+
+const CHAT_KEY = 'aa.chat.v1';
+const CHAT_SYSTEM =
+  '你是知更，一个替用户想该做什么的助手。现在用户直接跟你对话。' +
+  '说话克制、具体、不客套，不用 markdown，不堆形容词。' +
+  '用户问该做什么时，给出明确的建议而不是罗列选项。中文回答。';
+
+function chatLog() {
+  try { return JSON.parse(localStorage.getItem(CHAT_KEY) || '[]') || []; }
+  catch (e) { return []; }
+}
+
+function chatSave(list) {
+  try { localStorage.setItem(CHAT_KEY, JSON.stringify(list.slice(-100))); } catch (e) {}
+}
+
+function viewChat() {
+  const list = chatLog();
+  let msgs;
+  if (!list.length) {
+    msgs = '<div class="chat-empty">' + icon('chat', 30) +
+      '<p>跟它聊点什么。比如：我今天该先做什么？</p></div>';
+  } else {
+    msgs = list.map(function (m) {
+      return '<div class="chat-row ' + (m.role === 'user' ? 'me' : 'ai') + '">' +
+        '<div class="chat-bubble">' + esc(m.content).replace(/\n/g, '<br>') + '</div></div>';
+    }).join('');
+  }
+  if (S.chatBusy) {
+    msgs += '<div class="chat-row ai"><div class="chat-bubble chat-typing">它在想…</div></div>';
+  }
+  return '' +
+  '<div class="chat-wrap">' +
+    '<div class="chat-msgs" id="chat-msgs">' + msgs + '</div>' +
+    '<div class="chat-input-row">' +
+      '<textarea class="input chat-input" id="chat-input" rows="2" ' +
+        'placeholder="说点什么…（Enter 发送）"></textarea>' +
+      '<button class="btn btn-gold" data-act="chat-send"' + (S.chatBusy ? ' disabled' : '') + '>' +
+        icon('zap', 16) + '发送</button>' +
+    '</div>' +
+    (list.length
+      ? '<div class="chat-foot"><button class="link" data-act="chat-clear">清空对话</button></div>'
+      : '') +
+  '</div>';
+}
+
+async function chatSend() {
+  if (S.chatBusy) return;
+  const inp = $('#chat-input');
+  const text = (inp && inp.value || '').trim();
+  if (!text) return;
+  const list = chatLog();
+  list.push({ role: 'user', content: text, t: Date.now() });
+  chatSave(list);
+  S.chatBusy = true;
+  render();
+  try {
+    const reply = await chatComplete(list);
+    list.push({ role: 'assistant', content: reply, t: Date.now() });
+    chatSave(list);
+  } catch (e) {
+    toast(e && e.message ? e.message : '发送失败，请重试。', 'err');
+  } finally {
+    S.chatBusy = false;
+    render();
+    const i2 = $('#chat-input');
+    if (i2) i2.focus();
+  }
+}
+
+/** 组装上下文（带它「在意的」几条）并打给中继。cfg 为空 → 服务端默认模型。 */
+async function chatComplete(list) {
+  const cfg = readLlmPref();
+  const mem = S.memories.filter(m => !m.archived).slice(0, 8)
+    .map(m => '- ' + m.content).join('\n');
+  const sys = CHAT_SYSTEM + (mem ? '\n\n用户最近在意的事：\n' + mem : '');
+  const msgs = [{ role: 'system', content: sys }]
+    .concat(list.map(m => ({ role: m.role, content: m.content })));
+  const body = cfg
+    ? { base_url: cfg.baseUrl, api_key: cfg.apiKey, model: cfg.model, messages: msgs }
+    : { messages: msgs };
+  const r = await fetch('/api/llm', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(body),
+  });
+  let j = null;
+  try { j = await r.json(); } catch (e) { /* 非 JSON 响应按错误处理 */ }
+  if (!r.ok) throw new Error((j && j.error) || ('请求失败（' + r.status + '）'));
+  const txt = j && j.choices && j.choices[0] && j.choices[0].message &&
+              j.choices[0].message.content;
+  if (!txt) throw new Error('模型没有返回内容');
+  return String(txt).trim();
+}
+
 const TITLES = {
   today:    { t: '今天',     s: '只有一件需要你动手' },
+  chat:     { t: '对话',     s: '跟它直接聊' },
   timeline: { t: '时间线',   s: '它说过的、你做过的事' },
   care:     { t: '它在意的', s: '会自己变淡' },
   think:    { t: '它在想',   s: '内部状态，平时不占你的屏' },
@@ -1494,6 +1593,11 @@ function render() {
      别的页面有自己的空态，不该被引导页盖住 —— 否则导航看起来是坏的。 */
   const empty = !S.memories.length && !S.proposals.length;
   if (S.route === 'today') c.innerHTML = empty ? viewOnboarding() : viewToday();
+  else if (S.route === 'chat') {
+    c.innerHTML = viewChat();
+    const cm = $('#chat-msgs');
+    if (cm) cm.scrollTop = cm.scrollHeight;
+  }
   else if (S.route === 'timeline') c.innerHTML = viewTimeline();
   else if (S.route === 'care') c.innerHTML = viewCare();
   else if (S.route === 'think') c.innerHTML = viewThink();
@@ -1521,6 +1625,22 @@ function bindApp() {
   document.addEventListener('click', function (e) {
     const g = e.target.closest('[data-go]');
     if (g) { go(g.dataset.go); return; }
+  });
+
+  // 对话页：发送 / 清空
+  document.addEventListener('click', function (e) {
+    if (e.target.closest('[data-act="chat-send"]')) { chatSend(); return; }
+    const cl = e.target.closest('[data-act="chat-clear"]');
+    if (cl) {
+      chatSave([]);
+      render();
+    }
+  });
+  document.addEventListener('keydown', function (e) {
+    if (e.target && e.target.id === 'chat-input' && e.key === 'Enter' && !e.shiftKey) {
+      e.preventDefault();
+      chatSend();
+    }
   });
 
   // 对话相关动作：侧栏与顶栏都在 #content 之外，走 document 级委托
@@ -2355,14 +2475,11 @@ function paintIdentity() {
   if (mail) mail.textContent = local ? '本地模式' : (S.user && S.user.email) || '已登录';
 
   const btnIn = $('#btn-signin'), btnOut = $('#btn-signout');
-  if (btnIn) btnIn.hidden = !local;
-  if (btnOut) btnOut.hidden = local;
+  if (btnIn) btnIn.hidden = true;   /* 登录已下线 */
+  if (btnOut) btnOut.hidden = true;
 
   const bar = $('#local-bar');
-  if (bar) {
-    const dismissed = readLocalBarDismissed();
-    bar.hidden = !local || dismissed;
-  }
+  if (bar) bar.hidden = true;       /* 「登录后同步」横幅随登录一起下线 */
 }
 
 function readLocalBarDismissed() {
@@ -2388,21 +2505,10 @@ async function boot() {
     S.cloudOk = false;
   }
 
-  let session = null;
-  if (S.cloudOk) {
-    try { session = await Cloud.auth.session(); } catch (e) { session = null; }
-  }
-
   try {
-    if (session && session.user) {
-      await enterApp();
-    } else {
-      // 先把本地模式在背后启动好（这样登录页的「先不登录」出口才有地方可回），
-      // 再把登录界面递到用户眼前。旧逻辑静默进本地模式，
-      // 新用户根本发现不了登录入口 —— 多人产品不该这样开局。
-      await enterLocal();
-      if (S.cloudOk) openAuth();
-    }
+    /* 登录已下线（当前阶段它不是重点）：打开即用，数据存本机。
+       账号/同步相关代码保留在文件里休眠，之后要做多设备时再启用。 */
+    await enterLocal();
   } catch (e) {
     // 连本地模式都进不去（例如 localStorage 被彻底禁用）才算真正的启动失败
     $('#auth-view').hidden = false;
