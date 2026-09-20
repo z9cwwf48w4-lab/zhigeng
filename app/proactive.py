@@ -7,10 +7,14 @@
 生成失败落模板兜底，保证「它先开口」永远能落地。
 """
 import json
+import threading
 import time
 
 from . import db as dbm
 from . import llm, persona
+
+# 并发心跳会同时通过 due() 检查（LLM 生成要几秒），必须整段互斥
+_fire_lock = threading.Lock()
 
 PROACTIVE_TALK_GAP = 4 * 3600 * 1000   # 距上次任何对话
 PROACTIVE_GAP = 4 * 3600 * 1000        # 两次主动之间
@@ -85,18 +89,19 @@ def _compose(db):
 
 def fire(db):
     """生成一句主动开口，入库。返回消息 dict 或 None。"""
-    if not due(db):
-        return None
-    txt = _compose(db)
-    ts = int(time.time() * 1000)
-    cur = db.run("INSERT INTO messages(role,content,ts,proactive) "
-                 "VALUES('assistant',?,?,1)", (txt, ts))
-    st = _state()
-    today = time.strftime("%Y-%m-%d")
-    if st.get("day") != today:
-        st = {"day": today, "count": 0}
-    st["count"] = st.get("count", 0) + 1
-    st["last_at"] = ts
-    _save(st)
-    return {"id": cur.lastrowid, "role": "assistant", "content": txt,
-            "ts": ts, "proactive": 1}
+    with _fire_lock:
+        if not due(db):
+            return None
+        txt = _compose(db)
+        ts = int(time.time() * 1000)
+        cur = db.run("INSERT INTO messages(role,content,ts,proactive) "
+                     "VALUES('assistant',?,?,1)", (txt, ts))
+        st = _state()
+        today = time.strftime("%Y-%m-%d")
+        if st.get("day") != today:
+            st = {"day": today, "count": 0}
+        st["count"] = st.get("count", 0) + 1
+        st["last_at"] = ts
+        _save(st)
+        return {"id": cur.lastrowid, "role": "assistant", "content": txt,
+                "ts": ts, "proactive": 1}
