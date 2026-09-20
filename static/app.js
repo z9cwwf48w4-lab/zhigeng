@@ -1479,6 +1479,47 @@ const CHAT_SYSTEM_BASE =
   '- 偶尔带出用户自己没注意到的角度。\n' +
   '说话克制、具体，不用 markdown，不堆形容词，不用敬语。中文回答。';
 
+/* ── 感受引擎 ──────────────────────────────────────────────────────────
+   知更不是每次都被叫醒的函数。它对「过了多久」「聊了多少」有体感，
+   这些体感变成一种状态（想念、安心、陪你熬夜…），融进它说的每句话。 */
+
+const MOOD_KEY = 'aa.mood.v1';
+
+function moodData() {
+  try { return JSON.parse(localStorage.getItem(MOOD_KEY) || 'null') || {}; }
+  catch (e) { return {}; }
+}
+function moodSave(d) {
+  try { localStorage.setItem(MOOD_KEY, JSON.stringify(d)); } catch (e) {}
+}
+
+/** 任何一方说过话之后记一笔，喂给感受引擎。 */
+function moodTick() {
+  const d = moodData();
+  d.chats = (d.chats || 0) + 1;
+  d.lastChat = Date.now();
+  moodSave(d);
+}
+
+/** 它此刻的状态。不是面板，是一句话。 */
+function moodNow() {
+  const d = moodData();
+  const gapH = d.lastChat ? (Date.now() - d.lastChat) / 3600000 : 99;
+  const hh = new Date().getHours();
+  const late = hh >= 23 || hh < 5;
+  const memN = S.memories ? S.memories.filter(m => !m.archived).length : 0;
+  let feel;
+  if (gapH >= 48) feel = '很想你';
+  else if (gapH >= 20) feel = '有点想你';
+  else if (gapH >= 4) feel = '在等你回来';
+  else feel = (d.chats || 0) >= 30 ? '挺安心' : '挺高兴';
+  if (late && (feel === '挺安心' || feel === '挺高兴')) feel = '陪你熬夜';
+  const gapTxt = !d.lastChat ? '还没聊过'
+    : gapH >= 24 ? Math.round(gapH / 24) + ' 天前聊过'
+    : gapH >= 1 ? Math.round(gapH) + ' 小时前聊过' : '刚聊过不久';
+  return { feel, gapTxt, chats: d.chats || 0, memN, late };
+}
+
 /** 组装知更的「自我 + 对眼前这一刻的感知」：时间、称呼、档案、在意的事、上次聊到哪。 */
 function chatSystem() {
   const p = S.profile || {};
@@ -1509,6 +1550,12 @@ function chatSystem() {
   const mem = S.memories.filter(m => !m.archived).slice(0, 8)
     .map(m => '- ' + m.content).join('\n');
   if (mem) s += '\n\n你记着的、用户在意的事（聊到相关话题时自然提起）：\n' + mem;
+  const md = moodNow();
+  s += '\n\n你此刻的状态：' + md.feel + '（' + md.gapTxt +
+    '；你们聊过 ' + md.chats + ' 回合' +
+    (md.memN ? '；你记着它 ' + md.memN + ' 件在意的事' : '') +
+    (md.late ? '；现在是深夜' : '') + '）。' +
+    '情绪要融进语气里，别直接报告状态；状态和你此刻想说的话要一致。';
   return s;
 }
 
@@ -1523,18 +1570,39 @@ function chatSave(list) {
 
 function viewChat() {
   const list = chatLog();
+  const mood = moodNow();
+  const moodLine = '<div class="chat-mood">' + icon('sparkle', 13) +
+    '<span>它' + mood.feel + ' · ' + mood.gapTxt +
+    (mood.memN ? ' · 记着你 ' + mood.memN + ' 件在意的事' : '') + '</span></div>';
   let msgs;
   if (!list.length) {
-    msgs = '<div class="chat-empty">' + icon('chat', 30) +
-      '<p>跟它聊点什么。比如：我今天该先做什么？</p></div>';
+    const hello = mood.late ? '这个点还没睡？'
+      : mood.feel === '很想你' ? '好几天没聊了，最近怎么样？'
+      : '跟它聊点什么。比如：我今天该先做什么？';
+    msgs = '<div class="chat-empty">' + icon('chat', 30) + '<p>' + hello + '</p></div>';
   } else {
+    let lastDay = '';
     msgs = list.map(function (m, i) {
+      let sep = '';
+      if (m.t) {
+        const d = new Date(m.t);
+        const dayKey = d.toDateString();
+        if (dayKey !== lastDay) {
+          lastDay = dayKey;
+          const today = new Date().toDateString();
+          const yest = new Date(Date.now() - 864e5).toDateString();
+          const label = dayKey === today ? '今天'
+            : dayKey === yest ? '昨天'
+            : (d.getMonth() + 1) + ' 月 ' + d.getDate() + ' 日';
+          sep = '<div class="chat-day">' + label + ' · 星期' + '日一二三四五六'[d.getDay()] + '</div>';
+        }
+      }
       const mark = m.proactive
         ? '<div class="chat-mark">' + icon('sparkle', 12) + '它先开口</div>' : '';
       const rem = (m.role === 'user' && !m.mem)
         ? '<button class="link chat-rem" data-act="chat-remember" data-i="' + i + '">' +
           '记进它在意的</button>' : '';
-      return '<div class="chat-row ' + (m.role === 'user' ? 'me' : 'ai') + '">' + mark +
+      return sep + '<div class="chat-row ' + (m.role === 'user' ? 'me' : 'ai') + '">' + mark +
         '<div class="chat-bubble">' + esc(m.content).replace(/\n/g, '<br>') +
         (rem ? '<span class="chat-rem-row">' + rem + '</span>' : '') + '</div></div>';
     }).join('');
@@ -1542,7 +1610,7 @@ function viewChat() {
   if (S.chatBusy) {
     msgs += '<div class="chat-row ai"><div class="chat-bubble chat-typing">它在想…</div></div>';
   }
-  return '' +
+  return moodLine +
   '<div class="chat-wrap">' +
     '<div class="chat-msgs" id="chat-msgs">' + msgs + '</div>' +
     '<div class="chat-input-row">' +
@@ -1565,6 +1633,7 @@ async function chatSend() {
   const list = chatLog();
   list.push({ role: 'user', content: text, t: Date.now() });
   chatSave(list);
+  moodTick();
   S.chatBusy = true;
   render();
   try {
@@ -1648,6 +1717,7 @@ async function maybeProactive(force) {
     const list = chatLog();
     list.push({ role: 'assistant', content: txt, t: now, proactive: true });
     chatSave(list);
+    moodTick();
     st.lastAt = now; st.count = (st.count || 0) + 1;
     proactiveSave(st);
     if (S.route === 'chat') {
